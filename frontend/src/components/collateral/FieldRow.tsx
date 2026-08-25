@@ -7,6 +7,7 @@ import { curveSummary, specFromVector } from '../../lib/curves';
 import type { ApiFieldError, CurveSpec, FieldSpec, ReplineEntry } from '../../lib/types';
 import CurveEditorDialog from './CurveEditorDialog';
 import CurveSparkline from './CurveSparkline';
+import RrMatrixDialog from './RrMatrixDialog';
 
 interface Props {
   field: FieldSpec;
@@ -125,8 +126,27 @@ export default function FieldRow({ field, entry, errors, removable, onScalar, on
           />
         );
       }
-      case 'rr_matrix':
-        return <span className="dim" style={{ fontSize: 11 }}>edit via JSON upload (matrix UI TBD)</span>;
+      case 'rr_matrix': {
+        const hasMatrix = Array.isArray(value) && (value as unknown[]).length > 0;
+        return (
+          <span className="field-control">
+            <span className="dim" style={{ fontSize: 11 }}>
+              {hasMatrix ? '9×9 transition matrix set (roll-rate framework)' : 'not set'}
+            </span>
+            <button className="btn" title="Edit roll-rate matrix" onClick={() => setEditing(true)}>
+              <Pencil size={10} />
+            </button>
+            {editing && (
+              <RrMatrixDialog
+                initial={hasMatrix ? (value as number[][]) : null}
+                open={editing}
+                onClose={() => setEditing(false)}
+                onApply={(matrix) => onScalar(field.name, matrix)}
+              />
+            )}
+          </span>
+        );
+      }
       default:
         // float_scalar
         return (

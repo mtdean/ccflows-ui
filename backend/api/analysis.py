@@ -347,6 +347,104 @@ def solve_collateral_price(run_id: str, body: dict[str, Any] = Body(...)) -> dic
                         detail="Provide target_yield or collateral_price")
 
 
+@router.post("/runs/{run_id}/analysis/forward-whatif")
+def forward_whatif(run_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Mid-life what-if: assume the deal performs exactly to plan through
+    month k, then a scenario hits. Implemented by feeding the base run's own
+    months back as a perfect tape and splicing with a forward-only scenario —
+    carries, reserve, and trigger clocks all seed correctly.
+
+    body: {month: k, scenario: macro scenario name | null}
+    (The splice's forward-only stress speaks macro scenarios — baseline,
+    adverse, severely_adverse, rate_spike_300bps, stagflation.)
+    """
+    import pandas as pd
+
+    from cashflows.actuals import RemittanceData
+    from cashflows.actuals.deal_tracking import splice_pipeline_deal
+
+    from core import engine_bridge
+
+    record = _record_or_410(run_id)
+    if record.is_portfolio:
+        raise HTTPException(status_code=422,
+                            detail="What-ifs are not supported on forward-flow pools")
+    if record.boundary_month is not None:
+        raise HTTPException(status_code=422, detail=(
+            "This run already has real actuals — re-run stress scenarios instead; "
+            "they apply to the projected months automatically"))
+    if len(record.models) != 1:
+        raise HTTPException(status_code=422,
+                            detail="What-ifs need a single collateral engine type")
+
+    k = int(body.get("month") or 12)
+    model = record.models[0]
+    n_months = model.upb_end.shape[1]
+    if not (1 <= k <= n_months - 13):
+        raise HTTPException(status_code=422,
+                            detail=f"month must be between 1 and {n_months - 13}")
+    scenario = body.get("scenario")
+    if scenario in (None, "", "base", "baseline"):
+        scenario = None
+    else:
+        from cashflows.scenarios.library import MACRO_SCENARIOS
+
+        if scenario not in MACRO_SCENARIOS:
+            raise HTTPException(status_code=422, detail=(
+                f"Unknown macro scenario {scenario!r} "
+                f"(known: {', '.join(MACRO_SCENARIOS)})"))
+
+    # perfect tape: the model's own months 1..k
+    ids = [str(x) for x in __import__("numpy").atleast_1d(model.repline.repline_id)]
+    rows = []
+    for j, rid in enumerate(ids):
+        for mo in range(1, k + 1):
+            rows.append({
+                "repline_id": rid, "month": mo,
+                "upb_end": float(model.upb_end[j, mo]),
+                "interest_collected": float(model.revenue_interest[j, mo]),
+                "principal_collected": float(model.upb_prinpay[j, mo]),
+                "prepayments": float(model.upb_prepay[j, mo]),
+                "chargeoffs": float(model.upb_chargeoff[j, mo]),
+                "recoveries": float(model.upb_recovery[j, mo]),
+            })
+    try:
+        spliced = splice_pipeline_deal(model, record.waterfall_obj, record.result,
+                                       RemittanceData(pd.DataFrame(rows)),
+                                       scenario=scenario)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    forward = spliced.forward_metrics()
+    base_metrics = engine_bridge.tranche_metrics(record.result, record.waterfall_spec,
+                                                 record.price)
+    fwd_rows = []
+    for row in forward.to_dict(orient="records"):
+        base = base_metrics.get(str(row.get("tranche")), {})
+        fwd_rows.append({**row, "base_wal": base.get("wal"), "base_xirr": base.get("xirr"),
+                         "base_moic": base.get("moic")})
+
+    # combined balance series for the chart (trim dead tail)
+    balances = spliced.tranche_balance_end_combined
+    names = list(spliced.tranche_names)
+    live = 24
+    for m in range(balances.shape[1]):
+        if float(np.nansum(balances[:, m])) > 1:
+            live = m
+    series = {
+        "months": list(range(min(live + 2, balances.shape[1]))),
+        "tranches": {n: [None if np.isnan(v) else float(v)
+                         for v in balances[i, : live + 2]]
+                     for i, n in enumerate(names)},
+    }
+    return clean({
+        "boundary_month": k,
+        "scenario": body.get("scenario") or "custom",
+        "forward": fwd_rows,
+        "series": series,
+    })
+
+
 @router.post("/runs/{run_id}/analysis/marks")
 def post_marks(run_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Mark every tranche: {method, values: {tranche: v} | number, as_of_month}."""

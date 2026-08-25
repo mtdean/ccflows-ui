@@ -80,6 +80,46 @@ def download_deal(slug: str) -> FileResponse:
                         filename=f"{slug}.deal.json")
 
 
+@router.post("/deals/import-config", status_code=201)
+def import_config(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Import an existing ccflows config tree (.run.json/.yaml, .repline.*)
+    by server-side path. Replines arrive fully resolved (curves + stress +
+    portfolio overrides applied); run configs carry no waterfall, so the deal
+    gets the starter A/B/R structure to edit."""
+    from pathlib import Path
+
+    from cashflows import load as engine_load
+    from cashflows.serialize.recipe import repline_to_dict
+
+    path = Path(str(body.get("path") or "")).expanduser()
+    if not path.is_file():
+        raise HTTPException(status_code=422, detail=f"No such file: {path}")
+    try:
+        run_config = engine_load(path)
+        replines = run_config.get_replines()
+    except (ValueError, KeyError, FileNotFoundError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=f"Config load failed: {exc}") from exc
+
+    name = str(body.get("name") or run_config.name or path.stem)
+    doc = new_deal(name)
+    doc["run"]["replines"] = [{"inline": repline_to_dict(r)} for r in replines]
+    dollars = getattr(run_config.originations, "dollar_originations", None)
+    if dollars is not None and len(dollars) > 0:
+        doc["run"]["originations"] = {"schedule": [float(x) for x in dollars]}
+    doc["meta"]["tags"] = list(getattr(run_config, "tags", []) or [])
+    provenance = f"Imported from {path}"
+    if run_config.description:
+        provenance = f"{run_config.description}\n{provenance}"
+    doc["meta"]["notes"] = (provenance + "\nRun configs carry no waterfall — "
+                            "the starter A/B/R structure was applied; edit it "
+                            "on the STRUCTURE tab.")
+    slug = slugify(name)
+    if workspace.exists(slug) and not body.get("overwrite"):
+        raise HTTPException(status_code=409,
+                            detail=f"Deal '{slug}' already exists (pass overwrite)")
+    return workspace.save(doc)
+
+
 @router.post("/deals/import", status_code=201)
 async def import_deal(request: Request, overwrite: bool = Query(False)) -> dict[str, Any]:
     """Upload a base JSON (raw JSON body). Validates structure; engine-level

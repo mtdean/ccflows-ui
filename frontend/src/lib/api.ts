@@ -126,6 +126,54 @@ export const runRedline = (doc: DealDoc) =>
     .post<import('./types').RedlineResult>('/actuals/redline', { doc })
     .then((r) => r.data);
 
+// ── rates curves + curve libraries + config import ────────────────────────
+export interface RatesCurveSummary {
+  slug: string; name: string; source?: string; modified?: string;
+  columns: string[]; n_rows: number; first_date?: string; last_date?: string;
+  corrupt?: boolean;
+}
+export const listRatesCurves = () =>
+  client.get<RatesCurveSummary[]>('/rates-curves').then((r) => r.data);
+export const getRatesCurve = (slug: string) =>
+  client
+    .get<{ meta: Record<string, unknown>; records: Record<string, unknown>[] }>(`/rates-curves/${slug}`)
+    .then((r) => r.data);
+export const putRatesCurve = (slug: string, doc: Record<string, unknown>) =>
+  client.put<RatesCurveSummary>(`/rates-curves/${slug}`, doc).then((r) => r.data);
+export const deleteRatesCurve = (slug: string) =>
+  client.delete(`/rates-curves/${slug}`).then(() => undefined);
+export const buildRatesCurve = (body: Record<string, unknown>) =>
+  client.post<RatesCurveSummary>('/rates-curves/build', body).then((r) => r.data);
+
+export interface CurveLibSummary {
+  slug: string; name: string; vintage?: string | null; asset_class?: string | null;
+  description?: string; specified: string[]; modified?: string; corrupt?: boolean;
+}
+export const listCurveLibs = () =>
+  client.get<CurveLibSummary[]>('/curves-libs').then((r) => r.data);
+export const getCurveLib = (slug: string) =>
+  client
+    .get<CurveLibSummary & { curves: Record<string, number[]> }>(`/curves-libs/${slug}`)
+    .then((r) => r.data);
+export const deleteCurveLib = (slug: string) =>
+  client.delete(`/curves-libs/${slug}`).then(() => undefined);
+export const saveCurveLibFromRepline = (body: Record<string, unknown>) =>
+  client.post<CurveLibSummary>('/curves-libs/from-repline', body).then((r) => r.data);
+
+export const importConfig = (path: string, name?: string, overwrite = false) =>
+  client
+    .post<DealDoc>('/deals/import-config', { path, name, overwrite })
+    .then((r) => r.data);
+
+export interface WhatIfResult {
+  boundary_month: number;
+  scenario: string;
+  forward: Record<string, unknown>[];
+  series: { months: number[]; tranches: Record<string, (number | null)[]> };
+}
+export const forwardWhatIf = (runId: string, body: { month: number; scenario: string | null }) =>
+  client.post<WhatIfResult>(`/runs/${runId}/analysis/forward-whatif`, body).then((r) => r.data);
+
 // ── monitor ───────────────────────────────────────────────────────────────
 type Rec = Record<string, unknown>;
 const post = <T,>(url: string, body: Rec) => client.post<T>(url, body).then((r) => r.data);

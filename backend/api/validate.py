@@ -143,5 +143,20 @@ def post_validate_deal(doc: dict[str, Any] = Body(...)) -> dict[str, Any]:
     elif rates.get("mode") == "records" and not rates.get("records"):
         errors.append({"loc": ["rates", "records"], "field": None,
                        "msg": "Rates records are empty", "hint": None})
+    elif rates.get("mode") == "named":
+        from core import rates_store
+
+        slug = str(rates.get("curve") or "")
+        if not slug or not rates_store.exists(slug):
+            errors.append({"loc": ["rates", "curve"], "field": None,
+                           "msg": f"Named rate curve {slug!r} not found in workspace",
+                           "hint": "Create it under RATE CURVES on the Deals page"})
+        else:
+            cols = rates_store.columns_of(rates_store.load(slug))
+            index = str(rates.get("index") or "sofr_1m")
+            if index not in cols:
+                errors.append({"loc": ["rates", "index"], "field": None,
+                               "msg": f"Curve {slug!r} has no column {index!r} "
+                                      f"(available: {', '.join(cols)})", "hint": None})
 
     return clean({"ok": not errors, "errors": errors, "warnings": warns, "lint": lint})

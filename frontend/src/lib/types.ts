@@ -159,7 +159,8 @@ export interface WaterfallSpec {
 
 export type RatesSection =
   | { mode: 'flat'; rate: number; index: string }
-  | { mode: 'records'; records: Record<string, unknown>[] };
+  | { mode: 'records'; records: Record<string, unknown>[] }
+  | { mode: 'named'; curve: string; index: string };
 
 export interface StressSection {
   scenario: string;

@@ -83,6 +83,19 @@ and re-upload that exact file — it's the save format, the share format, and
 the archive format at once. Engine-native sections round-trip through
 `cashflows`' own codecs.
 
+### Rates, curve libraries, and config import
+
+Workspace-level **RATE CURVES** (Deals page): build named curves from a flat
+rate, month-offset points (linear interp), a **live Pensford SOFR forward
+fetch**, or a CSV upload (`date` + decimal rate columns — a Bloomberg export
+drops straight in). Deals reference a curve + index column via the RATES panel
+(multi-index curves supported). **CURVE LIBRARIES** promote any repline's
+assumption set into a reusable library ("SAVE CURVES AS LIBRARY" on the card)
+and apply it to other replines — only the curves the library explicitly
+carries are touched. **IMPORT CONFIG** loads existing ccflows `.run.json`
+config trees by path, with curves, stress, and portfolio overrides fully
+resolved.
+
 ### COLLATERAL — repline cards
 
 Each repline card shows the minimal fields; **[+ ADD FIELD]** opens a searchable
@@ -112,7 +125,9 @@ call) and a revolving reinvestment window.
 ### ACTUALS — remittance tapes
 
 Upload servicer (collateral) and trustee (bond) CSVs — templates downloadable
-in-app, validated against the engine's schema. Every run **splices the tape
+in-app, validated against the engine's schema. Monthly files **append** to the
+existing tape (overlapping months replace after a confirmation). Every run
+**splices the tape
 ahead of projections**, re-anchoring assumption curves at the boundary.
 Actual-vs-projected **CDR/CPR charts** and a **redline backtest** (variance,
 tracking error, hit rate) come free.
@@ -153,8 +168,10 @@ Tranche pricing at a manual yield, DM, spread, or **your own zero/swap curve**;
 yield & price tables; per-repline **unit economics** and whole-loan pricing;
 **principal breakevens** (loss multiplier to impairment per tranche);
 **residual solver** (target residual yield ⇄ max collateral price); full-deal
-marks; and **sensitivities** — CDR/CPR/rate/macro sweeps with a tornado chart,
-effective duration, and DV01.
+marks; **sensitivities** — CDR/CPR/rate/macro sweeps with a tornado chart,
+effective duration, and DV01; and **WHAT-IF** — "performs to plan through
+month k, then a macro scenario hits," with carries, reserve, and trigger
+clocks seeded from the boundary.
 
 ![Tranche pricing](docs/screenshots/12-analysis-pricing.png)
 ![Breakevens](docs/screenshots/13-analysis-breakevens.png)

@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, FolderOpen, Plus, Trash2 } from 'lucide-react';
-import { createDeal, deleteDeal, duplicateDeal, listDeals } from '../lib/api';
+import { createDeal, deleteDeal, duplicateDeal, importConfig, listDeals } from '../lib/api';
+import WorkspaceLibraries from '../components/collateral/WorkspaceLibraries';
 import { qk } from '../lib/queryKeys';
 import { apiErrorMessage, fmtTime, money, num } from '../lib/utils';
 import { useDealDraft } from '../lib/useDealDraft';
@@ -164,6 +165,28 @@ export default function DealsPage() {
             <button className="btn" type="submit" disabled={!name.trim() || create.isPending}>
               <Plus size={12} /> NEW DEAL
             </button>
+            <button
+              className="btn"
+              type="button"
+              title="Import an existing ccflows .run.json / .repline.json by file path"
+              onClick={async () => {
+                const path = window.prompt(
+                  'Path to a ccflows config (.run.json / .repline.json):',
+                  '/Users/td/ccflows/tests/fixtures/modular_json/base_case.run.json',
+                );
+                if (!path) return;
+                try {
+                  const doc = await importConfig(path);
+                  queryClient.invalidateQueries({ queryKey: qk.deals });
+                  openDeal(doc.meta.slug);
+                  navigate('/collateral');
+                } catch (err) {
+                  setError(apiErrorMessage(err, 'Config import failed'));
+                }
+              }}
+            >
+              IMPORT CONFIG
+            </button>
           </form>
         }
       >
@@ -181,6 +204,7 @@ export default function DealsPage() {
           />
         )}
       </Panel>
+      <WorkspaceLibraries />
       <Panel title="ABOUT">
         <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
           Build a collateral pool from repline cards, structure the liabilities as a bond stack

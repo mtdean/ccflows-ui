@@ -28,4 +28,7 @@ export const qk = {
   monitor: (slug: string, view: string, hash: string) => ['monitor', slug, view, hash] as const,
   closes: (slug: string) => ['closes', slug] as const,
   schemaCovenants: ['schema', 'covenants'] as const,
+  ratesCurves: ['ratesCurves'] as const,
+  ratesCurve: (slug: string) => ['ratesCurve', slug] as const,
+  curveLibs: ['curveLibs'] as const,
 };

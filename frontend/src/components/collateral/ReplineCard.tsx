@@ -1,8 +1,14 @@
 // One repline as a card: core fields always visible, extra knobs added via
 // the [+ ADD FIELD] menu, each removable back to its engine default.
 
-import { useMemo } from 'react';
-import { Copy, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { BookMarked, Copy, Trash2 } from 'lucide-react';
+import { getCurveLib, listCurveLibs, saveCurveLibFromRepline } from '../../lib/api';
+import { qk } from '../../lib/queryKeys';
+import { apiErrorMessage } from '../../lib/utils';
+import { specFromVector } from '../../lib/curves';
+import { useDealDraft } from '../../lib/useDealDraft';
 import type { ApiFieldError, CurveSpec, FieldSpec, ReplineEntry, ReplineSchema } from '../../lib/types';
 import Panel from '../shared/Panel';
 import FieldRow from './FieldRow';
@@ -17,6 +23,74 @@ interface Props {
   onDuplicate: () => void;
   onDelete: () => void;
   canDelete: boolean;
+}
+
+function CurveLibMenu({ entry }: { entry: ReplineEntry }) {
+  const { doc, update } = useDealDraft();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const libs = useQuery({ queryKey: qk.curveLibs, queryFn: listCurveLibs, enabled: open });
+  const replineId = String(entry.inline.repline_id);
+
+  async function saveAsLib() {
+    const name = window.prompt('Library name:', `${replineId} curves`);
+    if (!name || !doc) return;
+    try {
+      await saveCurveLibFromRepline({ doc, repline_id: replineId, name, overwrite: true });
+      queryClient.invalidateQueries({ queryKey: qk.curveLibs });
+      window.alert(`Saved curve library "${name}"`);
+    } catch (err) {
+      window.alert(apiErrorMessage(err, 'Save failed'));
+    }
+  }
+
+  async function applyLib(slug: string) {
+    try {
+      const lib = await getCurveLib(slug);
+      update((d) => {
+        const target = d.run.replines.find(
+          (e) => String(e.inline.repline_id) === replineId);
+        if (!target) return;
+        for (const [curve, values] of Object.entries(lib.curves)) {
+          target.inline[curve] = values;
+          target.curve_specs = { ...(target.curve_specs ?? {}), [curve]: specFromVector(values) };
+        }
+        (target as { ui?: { curves_id?: string } }).ui = {
+          ...((target as { ui?: object }).ui ?? {}), curves_id: slug,
+        };
+      });
+      setOpen(false);
+    } catch (err) {
+      window.alert(apiErrorMessage(err, 'Apply failed'));
+    }
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="btn" title="Curve libraries" onClick={() => setOpen((o) => !o)}>
+        <BookMarked size={12} />
+      </button>
+      {open && (
+        <div className="knob-menu" style={{ right: 0, left: 'auto', minWidth: 240 }}
+          onMouseLeave={() => setOpen(false)}>
+          <button className="knob-menu-item" onClick={() => { setOpen(false); void saveAsLib(); }}>
+            <span>SAVE CURVES AS LIBRARY…</span>
+            <span className="item-doc">promote this repline's set curves into a reusable library</span>
+          </button>
+          <div className="knob-menu-group">APPLY LIBRARY</div>
+          {(libs.data ?? []).length === 0 && (
+            <div className="knob-menu-item dim">no libraries yet</div>
+          )}
+          {(libs.data ?? []).map((l) => (
+            <button key={l.slug} className="knob-menu-item" onClick={() => void applyLib(l.slug)}>
+              <span>{l.name}</span>
+              <span className="item-doc">{l.specified.join(', ')}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function scalarDiffersFromDefault(field: FieldSpec, value: unknown): boolean {
@@ -117,6 +191,7 @@ export default function ReplineCard({
       subtitle={String(entry.inline.repline_id ?? '')}
       actions={
         <>
+          <CurveLibMenu entry={entry} />
           <button className="btn" title="Duplicate repline" onClick={onDuplicate}>
             <Copy size={12} />
           </button>

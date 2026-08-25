@@ -15,6 +15,7 @@ import MarksPanel from '../components/analysis/MarksPanel';
 import ResidualSolverPanel from '../components/analysis/ResidualSolverPanel';
 import SensitivitiesPanel from '../components/analysis/SensitivitiesPanel';
 import TranchePricingPanel from '../components/analysis/TranchePricingPanel';
+import WhatIfPanel from '../components/analysis/WhatIfPanel';
 
 export default function AnalysisPage() {
   const { doc, loading } = useDealDraft();
@@ -67,6 +68,7 @@ export default function AnalysisPage() {
               <Tabs.Trigger value="loans">COLLATERAL</Tabs.Trigger>
               <Tabs.Trigger value="solver">RESIDUAL SOLVER</Tabs.Trigger>
               <Tabs.Trigger value="sensitivities">SENSITIVITIES</Tabs.Trigger>
+              <Tabs.Trigger value="whatif">WHAT-IF</Tabs.Trigger>
               <Tabs.Trigger value="breakevens">BREAKEVENS</Tabs.Trigger>
               <Tabs.Trigger value="marks">MARKS</Tabs.Trigger>
             </Tabs.List>
@@ -82,6 +84,9 @@ export default function AnalysisPage() {
               </Tabs.Content>
               <Tabs.Content value="sensitivities">
                 <SensitivitiesPanel runId={runId} />
+              </Tabs.Content>
+              <Tabs.Content value="whatif">
+                <WhatIfPanel runId={runId} />
               </Tabs.Content>
               <Tabs.Content value="breakevens">
                 <BreakevenPanel />

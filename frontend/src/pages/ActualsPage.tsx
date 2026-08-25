@@ -32,6 +32,7 @@ function TapePanel({ level, title }: { level: Level; title: string }) {
   async function importRows(newRows: Row[]) {
     // numeric coercion + column whitelist
     const allowed = new Set([...(spec?.required ?? []), ...(spec?.optional ?? [])]);
+    const idCol = level === 'collateral' ? 'repline_id' : 'tranche';
     const cleaned = newRows
       .map((r) => {
         const out: Row = {};
@@ -47,17 +48,40 @@ function TapePanel({ level, title }: { level: Level; title: string }) {
       setMsg('No usable rows — check the column headers against the template');
       return;
     }
+
+    // append semantics: merge into the existing tape; overlapping (id, month)
+    // rows replace after a confirmation
+    let merged = cleaned;
+    const existing = (doc?.actuals?.[level] ?? []) as Row[];
+    if (existing.length) {
+      const key = (r: Row) => `${r[idCol]}|${r.month}`;
+      const newKeys = new Set(cleaned.map(key));
+      const overlaps = existing.filter((r) => newKeys.has(key(r)));
+      if (overlaps.length) {
+        const months = [...new Set(overlaps.map((r) => r.month))].sort((a, b) => Number(a) - Number(b));
+        if (!window.confirm(
+          `${overlaps.length} existing row(s) overlap (months ${months.join(', ')}). ` +
+          `Replace those months with the uploaded values?`)) {
+          setMsg('Import cancelled — overlapping months left unchanged');
+          return;
+        }
+      }
+      merged = [...existing.filter((r) => !newKeys.has(key(r))), ...cleaned]
+        .sort((a, b) => Number(a.month) - Number(b.month) || String(a[idCol]).localeCompare(String(b[idCol])));
+    }
+
     try {
-      const result = await validateActuals(level, cleaned);
+      const result = await validateActuals(level, merged);
       if (!result.ok) {
         setMsg(result.errors.map((e) => e.msg).join('; '));
         return;
       }
       update((d) => {
         d.actuals ??= { collateral: [], bonds: [] };
-        d.actuals[level] = cleaned;
+        d.actuals[level] = merged;
       });
-      setMsg(`Loaded ${result.n_rows} rows · months ${result.months?.first}–${result.months?.last} · ${result.ids?.join(', ')}`);
+      const appended = existing.length ? ` (+${cleaned.length} appended/updated)` : '';
+      setMsg(`Tape now ${result.n_rows} rows · months ${result.months?.first}–${result.months?.last} · ${result.ids?.join(', ')}${appended}`);
     } catch (err) {
       setMsg(apiErrorMessage(err, 'Validation failed'));
     }
@@ -106,7 +130,7 @@ function TapePanel({ level, title }: { level: Level; title: string }) {
             <Download size={11} /> TEMPLATE
           </button>
           <button className="btn" onClick={() => fileRef.current?.click()}>
-            <Upload size={11} /> CSV
+            <Upload size={11} /> {rows.length ? 'APPEND CSV' : 'CSV'}
           </button>
           {rows.length > 0 && (
             <button className="btn" style={{ color: 'var(--warning)' }}

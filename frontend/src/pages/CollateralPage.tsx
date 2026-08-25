@@ -14,6 +14,7 @@ import EmptyState from '../components/shared/EmptyState';
 import LoadingCursor from '../components/shared/LoadingCursor';
 import Panel from '../components/shared/Panel';
 import OriginationsPanel from '../components/collateral/OriginationsPanel';
+import RatesPanel from '../components/collateral/RatesPanel';
 import ReplineCard from '../components/collateral/ReplineCard';
 
 function newRepline(existing: ReplineEntry[]): ReplineEntry {
@@ -131,6 +132,7 @@ export default function CollateralPage() {
           </div>
         )}
       </Panel>
+      <RatesPanel />
       <OriginationsPanel />
       {validation.warnings.length > 0 && (
         <Panel title="WARNINGS">

@@ -137,8 +137,8 @@ def check_structure(doc: Any) -> None:
     if wf is not None and not isinstance(wf, dict):
         raise DocumentError("waterfall must be an object or null", ["waterfall"])
     rates = doc.get("rates")
-    if not isinstance(rates, dict) or rates.get("mode") not in ("flat", "records"):
-        raise DocumentError("rates.mode must be 'flat' or 'records'", ["rates", "mode"])
+    if not isinstance(rates, dict) or rates.get("mode") not in ("flat", "records", "named"):
+        raise DocumentError("rates.mode must be 'flat', 'records', or 'named'", ["rates", "mode"])
     for key, typ in (("stress", dict), ("monte_carlo", dict), ("export", dict), ("ui_state", dict)):
         if key in doc and doc[key] is not None and not isinstance(doc[key], typ):
             raise DocumentError(f"{key} must be an object", [key])

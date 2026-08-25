@@ -43,6 +43,22 @@ export default function BondStackEditor({ waterfall, errors, onChange }: Props) 
     });
   }
 
+  function addStrip(kind: 'io_strip' | 'wacio_strip') {
+    onChange((wf) => {
+      const used = new Set(wf.bonds.map((b) => b.name));
+      let name = kind === 'wacio_strip' ? 'WACIO' : 'IO';
+      let n = 1;
+      while (used.has(name)) name = `${kind === 'wacio_strip' ? 'WACIO' : 'IO'}${++n}`;
+      const insertAt = wf.bonds.findIndex((b) => b.type === 'residual');
+      const firstBond = wf.bonds.find((b) => b.type === 'bond');
+      const spec = kind === 'wacio_strip'
+        ? { type: 'wacio_strip' as const, name }
+        : { type: 'io_strip' as const, name, coupon: 0.02, margin: null,
+            floating: false, notional_of: firstBond?.name ?? '' };
+      wf.bonds.splice(insertAt < 0 ? wf.bonds.length : insertAt, 0, spec as never);
+    });
+  }
+
   function addBond() {
     onChange((wf) => {
       const used = new Set(wf.bonds.map((b) => b.name));
@@ -90,6 +106,10 @@ export default function BondStackEditor({ waterfall, errors, onChange }: Props) 
           <StructurePresetPicker onChange={onChange} />
           <button className="btn" onClick={addBond}>
             <Plus size={12} /> BOND
+          </button>
+          <button className="btn" title="Interest-only strip on a bond's notional"
+            onClick={() => addStrip('io_strip')}>
+            <Plus size={12} /> IO STRIP
           </button>
         </div>
       }
@@ -212,6 +232,53 @@ export default function BondStackEditor({ waterfall, errors, onChange }: Props) 
                     title="Remove bond"
                     onClick={() => removeBond(i)}
                   >
+                    <Trash2 size={11} />
+                  </button>
+                </td>
+              </tr>
+            ) : b.type === 'io_strip' || b.type === 'wacio_strip' ? (
+              <tr key={i}>
+                <td><span className="dim" style={{ fontSize: 10 }}>STRIP</span></td>
+                <td>
+                  <input className="input" style={{ width: 70, color: '#9b59b6' }} value={b.name}
+                    onChange={(e) => onChange((wf) => { wf.bonds[i].name = e.target.value; })} />
+                </td>
+                <td style={{ textAlign: 'right' }}><span className="dim">—</span></td>
+                {b.type === 'io_strip' ? (
+                  <>
+                    <td>
+                      <span className="dim" style={{ fontSize: 10 }}>on notional of </span>
+                      <select className="input"
+                        value={String((b as { notional_of?: string }).notional_of ?? '')}
+                        onChange={(e) => onChange((wf) => {
+                          (wf.bonds[i] as { notional_of?: string }).notional_of = e.target.value;
+                        })}>
+                        {notes.map((n) => <option key={n.name} value={n.name}>{n.name}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <input className="input num" style={{ width: 80 }} type="number" step={0.05}
+                        title="Strip coupon, % of the referenced notional"
+                        value={(() => {
+                          const v = (b as { coupon?: number | null }).coupon;
+                          return typeof v === 'number' ? (v * 100).toFixed(3).replace(/\.?0+$/, '') : '';
+                        })()}
+                        onChange={(e) => onChange((wf) => {
+                          (wf.bonds[i] as { coupon?: number | null }).coupon =
+                            e.target.value === '' ? null : Number(e.target.value) / 100;
+                        })} />
+                      <span className="dim" style={{ fontSize: 10 }}> %</span>
+                    </td>
+                  </>
+                ) : (
+                  <td colSpan={2}>
+                    <span className="dim" style={{ fontSize: 11 }}>WAC IO — excess of pool WAC over note coupons</span>
+                  </td>
+                )}
+                <td></td>
+                <td style={{ textAlign: 'right' }}>
+                  <button className="btn" style={{ color: 'var(--warning)' }} title="Remove strip"
+                    onClick={() => removeBond(i)}>
                     <Trash2 size={11} />
                   </button>
                 </td>
