@@ -35,6 +35,18 @@ export default function StatusBar() {
         <span className={`dot ${health.data ? 'dot-live' : 'dot-dead'}`} />
         {health.data ? `ENGINE ${health.data.engine_version}` : 'BACKEND UNREACHABLE'}
       </span>
+      {health.data?.dirs && (
+        <span
+          className={health.data.dirs.ok ? 'dim' : 'neg'}
+          title={Object.entries(health.data.dirs.folders)
+            .map(([name, f]) => `${f.exists ? '✓' : '✗ MISSING'} ${name} → ${f.path}`)
+            .join('\n')}
+        >
+          {health.data.dirs.ok
+            ? `⌂ ${health.data.dirs.folders.workspace?.path.replace(/^.*?([^/]+\/workspace)$/, '$1')}`
+            : '⚠ FOLDERS MISSING'}
+        </span>
+      )}
       {slug && (
         <span>
           DEAL {slug.toUpperCase()}

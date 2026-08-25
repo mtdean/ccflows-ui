@@ -15,8 +15,12 @@ router = APIRouter()
 @router.get("/health")
 def health() -> dict:
     import cashflows
+    import config
 
-    return {"status": "ok", "engine": "cashflows", "engine_version": cashflows.__version__}
+    config.ensure_dirs()  # self-heal: rebuild any missing piece of the skeleton
+    return {"status": "ok", "engine": "cashflows",
+            "engine_version": cashflows.__version__,
+            "dirs": config.dirs_status()}
 
 
 router.include_router(schema.router)

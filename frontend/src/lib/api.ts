@@ -30,7 +30,11 @@ export const client = axios.create({ baseURL: BASE, timeout: 120_000 });
 
 // ── health ────────────────────────────────────────────────────────────────
 export const getHealth = () =>
-  client.get<{ status: string; engine_version: string }>('/health').then((r) => r.data);
+  client
+    .get<{ status: string; engine_version: string;
+           dirs?: { root: string; ok: boolean;
+                    folders: Record<string, { path: string; exists: boolean }> } }>('/health')
+    .then((r) => r.data);
 
 // ── schema ────────────────────────────────────────────────────────────────
 export const getReplineSchema = () =>
