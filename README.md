@@ -181,6 +181,20 @@ clocks seeded from the boundary.
 ![Residual solver](docs/screenshots/22-residual-solver.png)
 ![Tornado](docs/screenshots/29-sensitivities-tornado.png)
 
+### Fund treasury & cash
+
+Each fund carries a **TREASURY & CASH** ledger: opening cash, a credit line
+(limit + rate), and dated capital events (contributions, distributions, draws,
+repayments). Deal receipts land on the **calendar** — each deal's month m maps
+through its run date — so the fund sees one Excel-shaped monthly grid: opening
+cash, capital flows, credit activity and interest (accruing on the balance
+carried into the month), position purchases, deal receipts (actuals through
+each tape's boundary, projections after, marked ᵖ), closing cash, drawn
+balance, and **dry powder** (cash + undrawn capacity), with a chart on top.
+A **FUND P&L** toggle aggregates the engine's per-position fair-value
+statements (cost basis, face, acquisition month, mark-book schedules) onto
+the same calendar by month/quarter/year.
+
 ### The mark book
 
 One shared **MARK BOOK** (Portfolios page) holds a mark per (deal, tranche)

@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 import config
 from core import portfolio_store, workspace
 from core.document import DocumentError, slugify
-from core.serialization import clean
+from core.serialization import clean, df_records
 
 router = APIRouter()
 
@@ -134,6 +134,128 @@ def _position_cashflows(tranche_cf: "np.ndarray", share: float, cost_value: floa
     cf[acquired_month] -= cost_value
     cf[acquired_month + 1:] += share * np.asarray(tranche_cf, dtype=float)[acquired_month + 1:]
     return cf
+
+
+@router.get("/portfolios/{slug}/treasury")
+def get_treasury(slug: str, horizon_months: int = 24) -> dict[str, Any]:
+    """The fund cash ledger: monthly, calendar-anchored, Excel-shaped."""
+    from core import treasury
+
+    doc = portfolio_store.load(slug)
+    horizon = max(6, min(int(horizon_months), 120))
+    return clean(treasury.build_ledger(doc, horizon_months=horizon))
+
+
+@router.put("/portfolios/{slug}/treasury")
+def put_treasury(slug: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Update the fund's treasury settings (opening cash, credit line, events)."""
+    from core.treasury import EVENT_TYPES
+
+    doc = portfolio_store.load(slug)
+    events = []
+    for i, e in enumerate(body.get("events") or []):
+        if e.get("type") not in EVENT_TYPES:
+            raise HTTPException(status_code=422, detail=f"events[{i}]: bad type")
+        try:
+            float(e.get("amount"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail=f"events[{i}]: bad amount") from None
+        if not str(e.get("month") or "")[:7]:
+            raise HTTPException(status_code=422, detail=f"events[{i}]: month required")
+        events.append({"month": str(e["month"])[:7], "type": e["type"],
+                       "amount": float(e["amount"]), "note": str(e.get("note") or "")})
+    doc["treasury"] = {
+        "opening_cash": float(body.get("opening_cash") or 0.0),
+        "credit_line": {"limit": float((body.get("credit_line") or {}).get("limit") or 0.0),
+                        "rate": float((body.get("credit_line") or {}).get("rate") or 0.0)},
+        "events": sorted(events, key=lambda e: e["month"]),
+    }
+    portfolio_store.save(doc)
+    return {"ok": True}
+
+
+@router.get("/portfolios/{slug}/pnl")
+def get_fund_pnl(slug: str, freq: str = "Q") -> dict[str, Any]:
+    """Fund P&L: engine per-position fair-value statements (cost basis, face,
+    acquisition month, book-schedule marks) aggregated onto the calendar."""
+    import pandas as pd
+
+    from cashflows import MarkSchedule, TranchePosition  # noqa: F401 — TranchePosition doc parity
+
+    from core import mark_book, tracking
+
+    if freq not in ("M", "Q", "A"):
+        raise HTTPException(status_code=422, detail="freq must be M, Q, or A")
+    doc = portfolio_store.load(slug)
+    marks_cfg = doc.get("marks") or {}
+    fund_method = str(marks_cfg.get("method") or "spread")
+
+    frames: list[pd.DataFrame] = []
+    skipped: list[dict[str, str]] = []
+    for p in doc.get("positions") or []:
+        deal_slug, tranche = p["deal"], p["tranche"]
+        try:
+            deal_doc = workspace.load(deal_slug)
+            if not tracking.has_actuals(deal_doc):
+                skipped.append({"position": f"{deal_slug}/{tranche}",
+                                "reason": "no actuals — P&L is realized-anchored"})
+                continue
+            tracked = tracking.get_tracked(deal_slug, deal_doc)
+            boundary = int(tracked.spliced().boundary_month)
+            schedule = mark_book.engine_schedule(deal_slug, tranche)
+            if schedule is None:
+                method, value, _ = _resolve_mark(marks_cfg, fund_method,
+                                                 deal_slug, tranche, boundary)
+                schedule = MarkSchedule({0: value}, method=method)
+            stmt = tracked.pnl(
+                tranche=tranche,
+                cost_basis=float(p.get("cost_basis", 100.0)),
+                face=float(p.get("face", 0.0)),
+                acquired_month=int(p.get("acquired_month") or 0),
+                spreads_or_yield=schedule,
+            )
+            monthly = stmt.monthly()
+            monthly = monthly.assign(
+                period=pd.PeriodIndex(pd.to_datetime(monthly["date"]), freq="M").astype(str))
+            frames.append(monthly[["period", "is_actual", "beginning_mv", "additions",
+                                   "interest_income", "realized_pl", "unrealized_pl",
+                                   "cash_received", "ending_mv"]])
+        except Exception as exc:  # noqa: BLE001 — one bad position shouldn't kill the view
+            skipped.append({"position": f"{deal_slug}/{tranche}", "reason": str(exc)})
+
+    if not frames:
+        return clean({"rows": [], "skipped": skipped, "freq": freq})
+
+    combined = pd.concat(frames, ignore_index=True)
+    # sum across positions per calendar month first...
+    by_month = combined.groupby("period", as_index=False).agg(
+        is_actual=("is_actual", "all"),
+        beginning_mv=("beginning_mv", "sum"),
+        additions=("additions", "sum"),
+        interest_income=("interest_income", "sum"),
+        realized_pl=("realized_pl", "sum"),
+        unrealized_pl=("unrealized_pl", "sum"),
+        cash_received=("cash_received", "sum"),
+        ending_mv=("ending_mv", "sum"),
+    ).sort_values("period")
+    # ...then bucket to the requested frequency (begin = first month, end = last)
+    by_month["bucket"] = (pd.PeriodIndex(by_month["period"], freq="M")
+                          .asfreq(freq).astype(str))
+    grouped = by_month.groupby("bucket", as_index=False).agg(
+        is_actual=("is_actual", "all"),
+        beginning_mv=("beginning_mv", "first"),
+        additions=("additions", "sum"),
+        interest_income=("interest_income", "sum"),
+        realized_pl=("realized_pl", "sum"),
+        unrealized_pl=("unrealized_pl", "sum"),
+        cash_received=("cash_received", "sum"),
+        ending_mv=("ending_mv", "last"),
+    ).rename(columns={"bucket": "period"})
+    grouped["total_pl"] = (grouped["interest_income"] + grouped["realized_pl"]
+                           + grouped["unrealized_pl"])
+    return clean({"rows": df_records(grouped)["records"],
+                  "columns": [str(c) for c in grouped.columns],
+                  "skipped": skipped, "freq": freq})
 
 
 @router.get("/portfolios/{slug}/analytics")

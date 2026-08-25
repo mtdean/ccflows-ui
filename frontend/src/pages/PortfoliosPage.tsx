@@ -23,6 +23,7 @@ import LoadingCursor from '../components/shared/LoadingCursor';
 import Panel from '../components/shared/Panel';
 import MarkBookPanel from '../components/portfolio/MarkBookPanel';
 import PositionsEditor from '../components/portfolio/PositionsEditor';
+import TreasuryPanel from '../components/portfolio/TreasuryPanel';
 
 function pnlClass(v: number | null | undefined): string {
   if (v == null || v === 0) return 'dim';
@@ -278,6 +279,7 @@ export default function PortfoliosPage() {
               onChange={update}
               saving={save.isPending}
             />
+            <TreasuryPanel slug={slug} />
           </>
         )}
       </div>

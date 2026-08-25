@@ -265,3 +265,82 @@ def test_pnl_uses_book_schedule(client):
         client.delete("/api/deals/pnl-book-deal")
         client.put("/api/mark-book/entry", json={
             "deal": "pnl-book-deal", "tranche": "A", "method": "spread", "schedule": {}})
+
+
+# ── fund treasury + fund P&L ───────────────────────────────────────────────
+
+def test_fund_treasury_ledger(client):
+    import math
+    import sys
+    sys.path.insert(0, "tests")
+    from test_monitor import _tape_doc
+
+    doc = _tape_doc("Treasury Deal")
+    assert client.post("/api/deals", json=doc).status_code == 201
+    pf = client.post("/api/portfolios", json={"name": "Treasury Fund"}).json()
+    pf["positions"] = [{"deal": "treasury-deal", "tranche": "A",
+                        "face": 10_000_000, "cost_basis": 100.0}]
+    client.put("/api/portfolios/treasury-fund", json=pf)
+    try:
+        run_month = doc["run"]["run_date"][:7]
+        r = client.put("/api/portfolios/treasury-fund/treasury", json={
+            "opening_cash": 2_000_000,
+            "credit_line": {"limit": 10_000_000, "rate": 0.06},
+            "events": [
+                {"month": run_month, "type": "contribution", "amount": 8_000_000},
+                {"month": run_month, "type": "draw", "amount": 4_000_000},
+            ]})
+        assert r.status_code == 200
+        led = client.get("/api/portfolios/treasury-fund/treasury?horizon_months=12").json()
+        rows = led["rows"]
+        assert rows, led
+        first = rows[0]
+        # opening 2M + contrib 8M + draw 4M - purchase 10M = 4M closing
+        assert math.isclose(first["closing_cash"], 4_000_000, abs_tol=1)
+        assert math.isclose(first["credit_drawn"], 4_000_000, abs_tol=1)
+        assert math.isclose(first["dry_powder"],
+                            first["closing_cash"] + 6_000_000, abs_tol=1)
+        for row in rows:
+            assert math.isclose(row["closing_cash"],
+                                row["opening_cash"] + row["net_cash_flow"], abs_tol=0.01)
+        # interest accrues on the drawn balance from the next month
+        assert rows[1]["credit_interest"] == pytest.approx(4_000_000 * 0.06 / 12)
+        # receipts arrive (position holds A which amortizes)
+        assert sum(r_["deal_receipts"] for r_ in rows) > 0
+        # events beyond the credit limit are clipped with a note
+        client.put("/api/portfolios/treasury-fund/treasury", json={
+            "opening_cash": 0, "credit_line": {"limit": 1_000_000, "rate": 0.06},
+            "events": [{"month": run_month, "type": "draw", "amount": 5_000_000}]})
+        led2 = client.get("/api/portfolios/treasury-fund/treasury").json()
+        assert "clipped" in led2["rows"][0]["notes"]
+        assert led2["rows"][0]["credit_drawn"] == pytest.approx(1_000_000)
+    finally:
+        client.delete("/api/portfolios/treasury-fund")
+        client.delete("/api/deals/treasury-deal")
+
+
+def test_fund_pnl_aggregates(client):
+    import sys
+    sys.path.insert(0, "tests")
+    from test_monitor import _tape_doc
+
+    doc = _tape_doc("Fundpnl Deal")
+    assert client.post("/api/deals", json=doc).status_code == 201
+    pf = client.post("/api/portfolios", json={"name": "Fundpnl Fund"}).json()
+    pf["positions"] = [
+        {"deal": "fundpnl-deal", "tranche": "A", "face": 5_000_000, "cost_basis": 99.0},
+        {"deal": "fundpnl-deal", "tranche": "B", "face": 2_000_000, "cost_basis": 98.0},
+    ]
+    client.put("/api/portfolios/fundpnl-fund", json=pf)
+    try:
+        p = client.get("/api/portfolios/fundpnl-fund/pnl?freq=Q")
+        assert p.status_code == 200, p.text
+        rows = p.json()["rows"]
+        assert rows and not p.json()["skipped"]
+        # begin/end MV chain across buckets
+        for prev, cur in zip(rows, rows[1:]):
+            assert cur["beginning_mv"] == pytest.approx(prev["ending_mv"], rel=1e-6)
+        assert sum(r["interest_income"] for r in rows) > 0
+    finally:
+        client.delete("/api/portfolios/fundpnl-fund")
+        client.delete("/api/deals/fundpnl-deal")
