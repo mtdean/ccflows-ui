@@ -31,4 +31,5 @@ export const qk = {
   ratesCurves: ['ratesCurves'] as const,
   ratesCurve: (slug: string) => ['ratesCurve', slug] as const,
   curveLibs: ['curveLibs'] as const,
+  markBook: ['markBook'] as const,
 };

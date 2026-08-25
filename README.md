@@ -181,6 +181,17 @@ clocks seeded from the boundary.
 ![Residual solver](docs/screenshots/22-residual-solver.png)
 ![Tornado](docs/screenshots/29-sensitivities-tornado.png)
 
+### The mark book
+
+One shared **MARK BOOK** (Portfolios page) holds a mark per (deal, tranche)
+across all funds — method (spread/DM/yield) plus a **stepped schedule**
+("200, 250 @m8" = 200bp until month 8, then 250). Funds resolve marks as:
+per-position override → mark book (at the deal's actuals boundary) → fund
+default, with a badge showing the source. **IMPORT MARKS** pastes a pricing
+run (`deal, tranche, value [, month] [, method]` per line) across the whole
+book, and P&L statements can run off the book's schedules
+(MONITOR → P&L → USE MARK BOOK).
+
 ### PORTFOLIOS — per-fund books
 
 One portfolio per fund; positions are deal + tranche + face + cost basis.

@@ -413,6 +413,8 @@ export interface PortfolioSummary {
 export interface PortfolioAnalyticsRow {
   irr_to_live?: number | null;
   fm_irr?: number | null;
+  mark_method?: string;
+  mark_source?: 'override' | 'book' | 'default';
   index: number;
   deal: string;
   tranche: string;

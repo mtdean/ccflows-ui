@@ -207,9 +207,9 @@ export const monitorTrancheSeries = (slug: string, doc: DealDoc) =>
 export const monitorPerformanceSeries = (slug: string, doc: DealDoc) =>
   post<{ boundary_month: number; rows: Rec[]; dollars: Record<string, TableData> }>(
     `/deals/${slug}/monitor/performance-series`, { doc });
-export const monitorPnl = (slug: string, doc: DealDoc, spreads: number | Record<string, number>, freq: string) =>
-  post<{ freq: string; statements: Record<string, { rollforward: TableData; summary: Rec; price_series: TableData }> }>(
-    `/deals/${slug}/monitor/pnl`, { doc, spreads, freq });
+export const monitorPnl = (slug: string, doc: DealDoc, spreads: number | Record<string, number>, freq: string, useBook = false) =>
+  post<{ freq: string; statements: Record<string, { rollforward: TableData; summary: Rec; price_series: TableData }>; book_used?: string[] }>(
+    `/deals/${slug}/monitor/pnl`, { doc, spreads, freq, use_book: useBook });
 export const closeMonth = (slug: string, body: Rec) =>
   post<Rec>(`/deals/${slug}/close`, body);
 export const listCloses = (slug: string) =>

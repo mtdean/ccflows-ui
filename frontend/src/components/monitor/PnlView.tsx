@@ -23,13 +23,14 @@ type Statements = Record<string, { rollforward: TableData; summary: Row; price_s
 export default function PnlView() {
   const { doc, slug } = useDealDraft();
   const [spread, setSpread] = useState(200);
+  const [useBook, setUseBook] = useState(true);
   const [freq, setFreq] = useState<'M' | 'Q' | 'A'>('Q');
   const [selected, setSelected] = useState<string | null>(null);
   const [data, setData] = useState<Statements | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const run = useMutation({
-    mutationFn: () => monitorPnl(slug!, doc!, spread, freq),
+    mutationFn: () => monitorPnl(slug!, doc!, spread, freq, useBook),
     onSuccess: (d) => {
       setData(d.statements);
       setError(null);
@@ -64,7 +65,12 @@ export default function PnlView() {
     <div className="stack">
       <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <div className="field-row">
-          <label>mark spread (bps, all tranches)</label>
+          <label>use mark book schedules</label>
+          <input type="checkbox" checked={useBook} onChange={(e) => setUseBook(e.target.checked)}
+            title="Tranches with mark-book entries use their stepped schedules; others fall back to the spread below" />
+        </div>
+        <div className="field-row">
+          <label>{useBook ? 'fallback spread (bps)' : 'mark spread (bps, all tranches)'}</label>
           <input className="input num" type="number" step={25} value={spread}
             onChange={(e) => setSpread(Number(e.target.value))} />
         </div>

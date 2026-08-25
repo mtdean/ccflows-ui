@@ -21,6 +21,7 @@ import type { Column } from '../components/shared/DataTable';
 import EmptyState from '../components/shared/EmptyState';
 import LoadingCursor from '../components/shared/LoadingCursor';
 import Panel from '../components/shared/Panel';
+import MarkBookPanel from '../components/portfolio/MarkBookPanel';
 import PositionsEditor from '../components/portfolio/PositionsEditor';
 
 function pnlClass(v: number | null | undefined): string {
@@ -100,7 +101,18 @@ export default function PortfoliosPage() {
     { key: 'tranche', header: 'TRANCHE', render: (r) => <span style={{ color: 'var(--text-accent)' }}>{r.tranche}</span> },
     { key: 'face', header: 'FACE', align: 'right', render: (r) => <span className="num mono">{money(r.face)}</span>, sortValue: (r) => r.face },
     { key: 'factor', header: 'FACTOR', align: 'right', render: (r) => <span className="num mono">{r.factor != null ? num(r.factor, 3) : '—'}</span> },
-    { key: 'mark_value', header: 'MARK', align: 'right', render: (r) => <span className="num mono dim">{r.mark_value != null ? `${num(r.mark_value, 0)}${markUnit}` : '—'}</span> },
+    {
+      key: 'mark_value', header: 'MARK', align: 'right',
+      render: (r) => (
+        <span className="num mono dim"
+          title={r.mark_source === 'book' ? 'From the workspace mark book'
+            : r.mark_source === 'override' ? 'Per-position override' : 'Fund default'}>
+          {r.mark_value != null ? `${num(r.mark_value, r.mark_method === 'yield' ? 3 : 0)}${r.mark_method === 'yield' ? '' : 'bp'}` : '—'}
+          {r.mark_source === 'book' && <span style={{ color: 'var(--text-accent)', fontSize: 9 }}> ᴮ</span>}
+          {r.mark_source === 'override' && <span style={{ color: 'var(--warning)', fontSize: 9 }}> ᴼ</span>}
+        </span>
+      ),
+    },
     { key: 'price', header: 'PRICE', align: 'right', render: (r) => <span className="num mono">{r.price != null ? num(r.price, 3) : '—'}</span>, sortValue: (r) => r.price },
     { key: 'market_value', header: 'MARKET VALUE', align: 'right', render: (r) => <span className="num mono">{money(r.market_value)}</span>, sortValue: (r) => r.market_value },
     { key: 'cost_basis', header: 'COST', align: 'right', render: (r) => <span className="num mono dim">{num(r.cost_basis, 2)}</span> },
@@ -130,6 +142,7 @@ export default function PortfoliosPage() {
   ], [markUnit]);
 
   return (
+    <div className="stack">
     <div className="sidebar-grid">
       <div className="stack">
         <Panel
@@ -268,6 +281,8 @@ export default function PortfoliosPage() {
           </>
         )}
       </div>
+    </div>
+    <MarkBookPanel />
     </div>
   );
 }

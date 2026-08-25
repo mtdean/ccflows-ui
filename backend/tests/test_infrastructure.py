@@ -189,3 +189,79 @@ def test_deal_templates_listed_and_compact(client):
     doc = client.get("/api/deal-templates/amortizing").json()
     assert len(doc["run"]["replines"][0]["inline"]["cdr"]) == 1  # engine pads
     assert "AUTHORING NOTES" in doc["meta"]["notes"]
+
+
+# ── mark book ──────────────────────────────────────────────────────────────
+
+def test_mark_book_schedule_and_resolution(client):
+    from core.document import new_deal
+
+    # a deal + a fund holding its A tranche
+    doc = new_deal("Markbook Deal")
+    assert client.post("/api/deals", json=doc).status_code == 201
+    pf = client.post("/api/portfolios", json={"name": "Markbook Fund"}).json()
+    pf["positions"] = [{"deal": "markbook-deal", "tranche": "A",
+                        "face": 1_000_000, "cost_basis": 100.0}]
+    pf["marks"] = {"method": "spread", "default": 999.0, "per_tranche": {}}
+    client.put("/api/portfolios/markbook-fund", json=pf)
+    try:
+        # book entry with a stepped schedule wins over the fund default
+        client.put("/api/mark-book/entry", json={
+            "deal": "markbook-deal", "tranche": "A", "method": "spread",
+            "schedule": {"0": 150, "6": 200}})
+        a = client.get("/api/portfolios/markbook-fund/analytics").json()
+        row = next(r for r in a["rows"] if "error" not in r)
+        assert row["mark_source"] == "book" and row["mark_value"] == 150.0  # boundary 0
+        # per-position override beats the book
+        pf2 = client.get("/api/portfolios/markbook-fund").json()
+        pf2["marks"]["per_tranche"] = {"markbook-deal": {"A": 300.0}}
+        client.put("/api/portfolios/markbook-fund", json=pf2)
+        a2 = client.get("/api/portfolios/markbook-fund/analytics").json()
+        row2 = next(r for r in a2["rows"] if "error" not in r)
+        assert row2["mark_source"] == "override" and row2["mark_value"] == 300.0
+        # matrix shows the schedule; import merges a point
+        mb = client.get("/api/mark-book").json()
+        mrow = next(r for r in mb["rows"]
+                    if r["deal"] == "markbook-deal" and r["tranche"] == "A")
+        assert mrow["schedule"] == {"0": 150.0, "6": 200.0}
+        imp = client.post("/api/mark-book/import", json={"rows": [
+            {"deal": "Markbook Deal", "tranche": "B", "value": 275}]}).json()
+        assert imp["applied"] == 1
+        # empty schedule deletes
+        client.put("/api/mark-book/entry", json={
+            "deal": "markbook-deal", "tranche": "A", "method": "spread", "schedule": {}})
+        mb2 = client.get("/api/mark-book").json()
+        mrow2 = next(r for r in mb2["rows"]
+                     if r["deal"] == "markbook-deal" and r["tranche"] == "A")
+        assert mrow2["schedule"] is None
+    finally:
+        client.delete("/api/portfolios/markbook-fund")
+        client.delete("/api/deals/markbook-deal")
+        client.put("/api/mark-book/entry", json={
+            "deal": "markbook-deal", "tranche": "B", "method": "spread", "schedule": {}})
+
+
+def test_pnl_uses_book_schedule(client):
+    import sys
+    sys.path.insert(0, "tests")
+    from test_monitor import _tape_doc
+
+    doc = _tape_doc("Pnl Book Deal")
+    assert client.post("/api/deals", json=doc).status_code == 201
+    try:
+        client.put("/api/mark-book/entry", json={
+            "deal": "pnl-book-deal", "tranche": "A", "method": "spread",
+            "schedule": {"0": 150, "4": 250}})
+        p = client.post("/api/deals/pnl-book-deal/monitor/pnl",
+                        json={"spreads": 200, "freq": "M", "use_book": True})
+        assert p.status_code == 200, p.text
+        data = p.json()
+        assert data["book_used"] == ["A"]
+        for name, s in data["statements"].items():
+            for r in s["rollforward"]["records"]:
+                if r["tie_check"] is not None:
+                    assert abs(r["tie_check"]) < 1e-6, name
+    finally:
+        client.delete("/api/deals/pnl-book-deal")
+        client.put("/api/mark-book/entry", json={
+            "deal": "pnl-book-deal", "tranche": "A", "method": "spread", "schedule": {}})

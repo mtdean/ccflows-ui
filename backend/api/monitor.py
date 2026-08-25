@@ -185,12 +185,23 @@ def monitor_pnl(slug: str, body: dict[str, Any] = Body(default={})) -> dict[str,
     freq = str(body.get("freq") or "M")
     if freq not in ("M", "Q", "A"):
         raise HTTPException(status_code=422, detail="freq must be M, Q, or A")
+    use_book = bool(body.get("use_book"))
     spread_arg = spreads if isinstance(spreads, (int, float)) else dict(spreads)
     statements: dict[str, Any] = {}
     skipped: dict[str, str] = {}
+    book_used: list[str] = []
     for name in tracked.tranche_names:
         try:
-            statements[name] = tracked.pnl(spread_arg, tranche=name)
+            schedule = None
+            if use_book:
+                from core import mark_book
+
+                schedule = mark_book.engine_schedule(slug, name)
+            if schedule is not None:
+                statements[name] = tracked.pnl(tranche=name, spreads_or_yield=schedule)
+                book_used.append(name)
+            else:
+                statements[name] = tracked.pnl(spread_arg, tranche=name)
         except (ValueError, KeyError, TypeError) as exc:
             skipped[name] = str(exc)  # e.g. zero-balance residuals
     if not statements:
@@ -207,7 +218,8 @@ def monitor_pnl(slug: str, body: dict[str, Any] = Body(default={})) -> dict[str,
             "price_series": df_records(
                 monthly[["month", "is_actual", "clean_price", "balance", "ending_mv"]]),
         }
-    return clean({"freq": freq, "statements": out, "skipped": skipped})
+    return clean({"freq": freq, "statements": out, "skipped": skipped,
+                  "book_used": book_used})
 
 
 CLOSES_DIRNAME = "closes"

@@ -77,6 +77,21 @@ def _mark_value(marks: dict[str, Any], deal: str, tranche: str) -> float:
     return float(marks.get("default") or 0.0)
 
 
+def _resolve_mark(marks: dict[str, Any], fund_method: str, deal: str, tranche: str,
+                  boundary: int) -> tuple[str, float, str]:
+    """(method, value, source) — precedence: fund per-position override >
+    workspace mark book (at the deal's boundary month) > fund default."""
+    per = (marks.get("per_tranche") or {}).get(deal) or {}
+    if tranche in per:
+        return fund_method, float(per[tranche]), "override"
+    from core import mark_book
+
+    booked = mark_book.resolve(deal, tranche, boundary)
+    if booked is not None:
+        return booked[0], booked[1], "book"
+    return fund_method, float(marks.get("default") or 0.0), "default"
+
+
 def _num(value: Any) -> float | None:
     try:
         f = float(value)
@@ -196,7 +211,9 @@ def get_analytics(slug: str) -> dict[str, Any]:
             rows.append({**base, "error": deal_errors[deal_slug]})
             continue
         ctx = contexts[deal_slug]
-        value = _mark_value(marks_cfg, deal_slug, tranche)
+        pos_method, value, mark_source = _resolve_mark(
+            marks_cfg, method, deal_slug, tranche, ctx["boundary"])
+        pos_kwarg = {"spread": "spread_bps", "yield": "yld", "dm": "dm_bps"}[pos_method]
         acquired = int(p.get("acquired_month") or 0)
         try:
             position = TranchePosition(
@@ -207,8 +224,8 @@ def get_analytics(slug: str) -> dict[str, Any]:
                 deal_id=deal_slug,
             )
             if ctx["mode"] == "spliced":
-                frame = ctx["spliced"].position_marks([position], method=method,
-                                                     **{kwarg_name: value})
+                frame = ctx["spliced"].position_marks([position], method=pos_method,
+                                                     **{pos_kwarg: value})
                 m = frame.iloc[0].to_dict()
                 m = {"factor": m.get("factor"), "par_value": m.get("par"),
                      "price": m.get("price"), "market_value": m.get("market_value"),
@@ -216,8 +233,8 @@ def get_analytics(slug: str) -> dict[str, Any]:
                      "unrealized_pnl": m.get("pnl"), "wal_remaining": m.get("wal"),
                      "modified_duration": m.get("duration"), "spread_dv01": m.get("dv01")}
             else:
-                m = mark_position(position, ctx["result"], method=method,
-                                  **{kwarg_name: value}).to_dict()
+                m = mark_position(position, ctx["result"], method=pos_method,
+                                  **{pos_kwarg: value}).to_dict()
         except (ValueError, KeyError, TypeError) as exc:
             rows.append({**base, "error": str(exc)})
             continue
@@ -250,6 +267,8 @@ def get_analytics(slug: str) -> dict[str, Any]:
         rows.append({
             **base,
             "mark_value": value,
+            "mark_method": pos_method,
+            "mark_source": mark_source,
             "factor": _num(m.get("factor")),
             "par_value": _num(m.get("par_value")),
             "price": _num(m.get("price")),
