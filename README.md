@@ -44,6 +44,24 @@ One FastAPI process serves both the API (`/api/*`) and the built SPA. The port
 is `CCFLOWS_PORT` (default **8020**). LAN access works out of the box (the
 script prints your LAN URL).
 
+### Windows
+
+The app is fully portable; only the launch script differs. Check out the
+**`ccflows` engine as a sibling** of this repo (the backend installs it from
+`..\..\ccflows`), then in PowerShell:
+
+```powershell
+# layout:  <parent>\ccflows  and  <parent>\ccflows-ui
+cd ccflows-ui\frontend
+npm install; npm run build
+cd ..
+.\scripts\run.ps1          # creates backend\.venv on first run -> http://localhost:8020
+```
+
+Notes: Python 3.12+ and Node 18+ on PATH; venv binaries live under
+`.venv\Scripts\` (not `.venv/bin/`); `run.sh` also works under WSL or Git
+Bash if you prefer. Tests: `backend\.venv\Scripts\python -m pytest -q`.
+
 ### Development mode (hot reload)
 
 ```bash

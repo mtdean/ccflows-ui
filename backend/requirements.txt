@@ -1,4 +1,6 @@
--e /Users/td/ccflows[excel]
+# the cashflows engine, expected as a sibling checkout: <parent>/ccflows
+# (pip resolves this relative to the CWD — install from backend/)
+-e ../../ccflows[excel]
 fastapi==0.136.3
 uvicorn[standard]==0.48.0
 python-multipart==0.0.20
