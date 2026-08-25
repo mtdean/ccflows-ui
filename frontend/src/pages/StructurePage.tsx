@@ -11,6 +11,7 @@ import LoadingCursor from '../components/shared/LoadingCursor';
 import Panel from '../components/shared/Panel';
 import BondStackEditor from '../components/structure/BondStackEditor';
 import CallReinvestPanel from '../components/structure/CallReinvestPanel';
+import TakeoutPanel from '../components/structure/TakeoutPanel';
 import MermaidPreview from '../components/structure/MermaidPreview';
 import StepList from '../components/structure/StepList';
 import TriggerEditor from '../components/structure/TriggerEditor';
@@ -92,6 +93,7 @@ export default function StructurePage() {
       </div>
       <TriggerEditor waterfall={waterfall} metrics={triggerMetrics.data} onChange={onWaterfall} />
       <CallReinvestPanel />
+      <TakeoutPanel />
     </div>
   );
 }

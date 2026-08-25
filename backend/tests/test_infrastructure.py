@@ -344,3 +344,57 @@ def test_fund_pnl_aggregates(client):
     finally:
         client.delete("/api/portfolios/fundpnl-fund")
         client.delete("/api/deals/fundpnl-deal")
+
+
+# ── securitization takeout ─────────────────────────────────────────────────
+
+def test_takeout_lifecycle(client):
+    import sys
+    sys.path.insert(0, "tests")
+    from test_monitor import _tape_doc
+
+    doc = _tape_doc("Warehouse Wh")   # 8 months of actuals
+    assert client.post("/api/deals", json=doc).status_code == 201
+    pf = client.post("/api/portfolios", json={"name": "Takeout Fund"}).json()
+    pf["positions"] = [{"deal": "warehouse-wh", "tranche": "A",
+                        "face": 10_000_000, "cost_basis": 100.0}]
+    client.put("/api/portfolios/takeout-fund", json=pf)
+    try:
+        from core import engine_bridge
+        base_replines, _ = engine_bridge.build_replines(doc)
+        orig_cdr8 = float(base_replines[0].cdr[8])
+
+        r = client.post("/api/deals/warehouse-wh/securitize", json={
+            "month": 8, "name": "Wh Term", "structure": "abr",
+            "takeout_price_pct": 100.0,
+            "roll_fund": {"portfolio": "takeout-fund",
+                          "add_positions": [{"tranche": "A", "face": 5_000_000,
+                                             "cost_basis": 100.0}]}})
+        assert r.status_code == 201, r.text
+        d = r.json()
+        assert d["changes"]["seasoned_from"] == "actuals"
+        term = d["term_deal"]
+        inline = term["run"]["replines"][0]["inline"]
+        assert inline["age"] == 8
+        assert inline["cdr"][0] == pytest.approx(orig_cdr8)   # curve re-anchored
+        assert inline["upb"] == pytest.approx(d["changes"]["seasoned_balance"])
+        # term deal runs
+        assert client.post("/api/deals/wh-term/run",
+                           json={"scenario": "base"}).status_code == 200
+        # warehouse call set
+        wh = client.get("/api/deals/warehouse-wh").json()
+        assert wh["call"]["enabled"] and wh["call"]["call_month"] == 8
+        # fund kept the warehouse position AND gained the term one
+        fund = client.get("/api/portfolios/takeout-fund").json()
+        deals_held = {p["deal"] for p in fund["positions"]}
+        assert deals_held == {"warehouse-wh", "wh-term"}
+        # ledger: call payoff lands in the takeout calendar month
+        led = client.get("/api/portfolios/takeout-fund/treasury?horizon_months=6").json()
+        takeout_period = str(__import__("pandas").Period(doc["run"]["run_date"][:7], freq="M") + 8)
+        row = next(x for x in led["rows"] if x["period"] == takeout_period)
+        assert row["deal_receipts"] > 5_000_000        # A payoff ~ its month-8 balance
+        assert row["purchases"] == pytest.approx(5_000_000)
+    finally:
+        client.delete("/api/portfolios/takeout-fund")
+        client.delete("/api/deals/warehouse-wh")
+        client.delete("/api/deals/wh-term")

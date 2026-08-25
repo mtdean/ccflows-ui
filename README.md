@@ -263,3 +263,16 @@ docs/screenshots/   README images (captured from the live app)
   reinvestment/calls; all such combinations fail with clear messages.
 - Covenants are factory-based (JSON-safe) by design — the engine's
   callable covenants can't round-trip through a document.
+
+### Securitization takeouts
+
+The **SECURITIZATION TAKEOUT** panel (Structure page) handles the
+"balance-sheet / warehouse it, then securitize a month later" lifecycle in one
+action: it seasons the pool to month k (balance from the remittance tape when
+it covers month k, else the projection; assumption curves re-anchored to the
+boundary using the engine's splice conventions), creates the term deal with
+its own run date and a chosen structure, and sets the takeout call on the
+warehouse deal at your sale price. Fund positions on the warehouse are kept —
+the call terminates their cashflows with the payoff — so the fund's cash
+ledger shows call proceeds in and term-deal purchases out in the same
+calendar month, and dry powder bridges the handoff correctly.

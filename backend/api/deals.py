@@ -233,6 +233,86 @@ _register_template("forward-flow", "Forward flow + warehouse",
                    _forward_flow_template)
 
 
+@router.post("/deals/{slug}/securitize", status_code=201)
+def securitize(slug: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Securitization takeout: season this deal's collateral to month k, create
+    a term deal from it, optionally set the takeout call on this deal and roll
+    a fund's positions.
+
+    body: {month, name, structure: "abr"|"abcr"|"abcder"|"copy",
+           takeout_price_pct?, set_call?, doc?,
+           roll_fund?: {portfolio, retire_warehouse?, add_positions?: [...]}}
+    """
+    from core import takeout
+
+    doc = body.get("doc") or workspace.load(slug)
+    k = int(body.get("month") or 0)
+    name = str(body.get("name") or f"{doc['meta']['name']} Takeout")
+    structure = str(body.get("structure") or "abr")
+    price_pct = float(body.get("takeout_price_pct") or 100.0)
+
+    try:
+        entries, info = takeout.season_replines(doc, k)
+        waterfall = takeout.term_waterfall(structure, doc)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    term = new_deal(name)
+    term["run"]["run_date"] = takeout.takeout_run_date(info["run_date"], k)
+    term["run"]["replines"] = entries
+    term["waterfall"] = waterfall
+    term["rates"] = doc.get("rates") or term["rates"]
+    term["meta"]["tags"] = ["takeout"]
+    term["meta"]["notes"] = (
+        f"Takeout of '{doc['meta']['name']}' at month {k} "
+        f"(seasoned from {info['source']}; pool {info['balance']:,.0f}; "
+        f"takeout price {price_pct:g}). Curves re-anchored to the boundary.")
+    term_slug = slugify(name)
+    if workspace.exists(term_slug) and not body.get("overwrite"):
+        raise HTTPException(status_code=409,
+                            detail=f"Deal '{term_slug}' already exists (pass overwrite)")
+    saved_term = workspace.save(term)
+
+    changed: dict[str, Any] = {"term_deal": term_slug,
+                               "seasoned_balance": info["balance"],
+                               "seasoned_from": info["source"]}
+
+    if body.get("set_call", True):
+        warehouse = workspace.load(slug)
+        warehouse["call"] = {"enabled": True, "call_month": k, "nc_months": 0,
+                             "call_price_pct": price_pct, "clean_up_call": False,
+                             "clean_up_call_pct": 0.10}
+        workspace.save(warehouse)
+        changed["warehouse_call"] = {"call_month": k, "call_price_pct": price_pct}
+
+    roll = body.get("roll_fund") or {}
+    if roll.get("portfolio"):
+        from core import portfolio_store
+
+        pf = portfolio_store.load(str(roll["portfolio"]))
+        # default: KEEP warehouse positions — the call truncates their cashflows
+        # at month k, so they self-terminate with the payoff in the ledger;
+        # removing them would erase the proceeds from the fund's cash history
+        if roll.get("retire_warehouse", False):
+            before = len(pf["positions"])
+            pf["positions"] = [p for p in pf["positions"] if p.get("deal") != slug]
+            changed["retired_positions"] = before - len(pf["positions"])
+        added = 0
+        for p in roll.get("add_positions") or []:
+            pf["positions"].append({
+                "deal": term_slug, "tranche": str(p.get("tranche") or "R"),
+                "face": float(p.get("face") or 0.0),
+                "cost_basis": float(p.get("cost_basis") or 100.0),
+                "acquired_month": 0,
+            })
+            added += 1
+        changed["added_positions"] = added
+        portfolio_store.save(pf)
+        changed["portfolio"] = roll["portfolio"]
+
+    return {"term_deal": saved_term, "changes": changed}
+
+
 @router.get("/deal-templates")
 def list_templates() -> list[dict[str, Any]]:
     return [{k: t[k] for k in ("key", "label", "description")}

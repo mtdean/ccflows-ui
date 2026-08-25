@@ -31,6 +31,24 @@ def _period(run_date: str, month: int) -> pd.Period:
     return pd.Period(run_date[:7], freq="M") + month
 
 
+def apply_call_overlay(cashflows: np.ndarray, balances: np.ndarray,
+                       doc: dict[str, Any]) -> np.ndarray:
+    """A pending call on a deal WITH actuals: the engine's call transform can't
+    combine with a tape, so overlay the takeout by hand — cashflows stop at the
+    call month and each tranche receives its balance at the call price there."""
+    call = doc.get("call") or {}
+    if not call.get("enabled") or call.get("call_month") is None:
+        return cashflows
+    k = int(call["call_month"])
+    if k >= cashflows.shape[1] - 1:
+        return cashflows
+    price = float(call.get("call_price_pct") or 100.0) / 100.0
+    out = np.nan_to_num(cashflows).copy()
+    out[:, k] += np.nan_to_num(balances[:, k]) * price
+    out[:, k + 1:] = 0.0
+    return out
+
+
 def _deal_context(deal_slug: str) -> dict[str, Any] | None:
     """Combined per-tranche cashflows + calendar anchor for one deal."""
     try:
@@ -42,14 +60,19 @@ def _deal_context(deal_slug: str) -> dict[str, Any] | None:
         if tracking.has_actuals(doc):
             tracked = tracking.get_tracked(deal_slug, doc)
             spliced = tracked.spliced()
+            cashflows = apply_call_overlay(
+                np.asarray(spliced.tranche_cashflows_combined, dtype=float),
+                np.asarray(spliced.tranche_balance_end_combined, dtype=float),
+                doc)
             return {
                 "names": list(spliced.tranche_names),
                 "originals": np.asarray(tracked.deal.original_balances, dtype=float),
-                "cashflows": np.asarray(spliced.tranche_cashflows_combined, dtype=float),
+                "cashflows": cashflows,
                 "boundary": int(spliced.boundary_month),
                 "run_date": run_date,
             }
         run, _, _ = portfolio_store.cached_base_run(deal_slug, doc)
+        # (calls on tape-less deals are already applied inside the engine run)
         return {
             "names": [b["name"] for b in (doc.get("waterfall") or {}).get("bonds", [])],
             "originals": np.asarray(run.result.original_balances, dtype=float),

@@ -292,13 +292,18 @@ def get_analytics(slug: str) -> dict[str, Any]:
             continue
         try:
             if tracking.has_actuals(deal_doc):
+                from core.treasury import apply_call_overlay
+
                 tracked = tracking.get_tracked(deal_slug, deal_doc)
                 spliced = tracked.spliced()
                 contexts[deal_slug] = {
                     "mode": "spliced",
                     "names": list(spliced.tranche_names),
                     "originals": np.asarray(tracked.deal.original_balances, dtype=float),
-                    "combined_cf": np.asarray(spliced.tranche_cashflows_combined, dtype=float),
+                    "combined_cf": apply_call_overlay(
+                        np.asarray(spliced.tranche_cashflows_combined, dtype=float),
+                        np.asarray(spliced.tranche_balance_end_combined, dtype=float),
+                        deal_doc),
                     "boundary": int(spliced.boundary_month),
                     "spliced": spliced,
                 }
