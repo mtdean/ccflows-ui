@@ -4,16 +4,58 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Copy, FolderOpen, Plus, Trash2 } from 'lucide-react';
-import { createDeal, deleteDeal, duplicateDeal, importConfig, listDeals } from '../lib/api';
+import {
+  createDeal, deleteDeal, duplicateDeal, getDealTemplate, importConfig, listDealTemplates, listDeals,
+} from '../lib/api';
 import WorkspaceLibraries from '../components/collateral/WorkspaceLibraries';
 import { qk } from '../lib/queryKeys';
-import { apiErrorMessage, fmtTime, money, num } from '../lib/utils';
+import { apiErrorMessage, downloadJson, fmtTime, money, num } from '../lib/utils';
 import { useDealDraft } from '../lib/useDealDraft';
 import type { DealSummary } from '../lib/types';
 import DataTable from '../components/shared/DataTable';
 import type { Column } from '../components/shared/DataTable';
 import LoadingCursor from '../components/shared/LoadingCursor';
 import Panel from '../components/shared/Panel';
+
+function TemplatesMenu() {
+  const [open, setOpen] = useState(false);
+  const templates = useQuery({
+    queryKey: ['dealTemplates'],
+    queryFn: listDealTemplates,
+    staleTime: Infinity,
+    enabled: open,
+  });
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="btn" type="button"
+        title="Download a starter deal JSON to author your own and upload it"
+        onClick={() => setOpen((o) => !o)}>
+        TEMPLATES ▾
+      </button>
+      {open && (
+        <div className="knob-menu" style={{ right: 0, left: 'auto', minWidth: 300 }}
+          onMouseLeave={() => setOpen(false)}>
+          <div className="knob-menu-group">DOWNLOAD A STARTER DEAL JSON</div>
+          {(templates.data ?? []).map((t) => (
+            <button key={t.key} className="knob-menu-item" type="button"
+              onClick={async () => {
+                setOpen(false);
+                const doc = await getDealTemplate(t.key);
+                downloadJson(doc, `${t.key}-template.deal.json`);
+              }}>
+              <span>{t.label}</span>
+              <span className="item-doc">{t.description}</span>
+            </button>
+          ))}
+          <div className="knob-menu-item dim" style={{ cursor: 'default', fontSize: 10 }}>
+            Curve arrays may be any length (engine pads); authoring notes are in
+            meta.notes. Edit the file, then upload it with the ⬆ button up top.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function DealsPage() {
   const [name, setName] = useState('');
@@ -165,6 +207,7 @@ export default function DealsPage() {
             <button className="btn" type="submit" disabled={!name.trim() || create.isPending}>
               <Plus size={12} /> NEW DEAL
             </button>
+            <TemplatesMenu />
             <button
               className="btn"
               type="button"

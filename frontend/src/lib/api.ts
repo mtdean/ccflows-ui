@@ -160,6 +160,13 @@ export const deleteCurveLib = (slug: string) =>
 export const saveCurveLibFromRepline = (body: Record<string, unknown>) =>
   client.post<CurveLibSummary>('/curves-libs/from-repline', body).then((r) => r.data);
 
+export const listDealTemplates = () =>
+  client
+    .get<{ key: string; label: string; description: string }[]>('/deal-templates')
+    .then((r) => r.data);
+export const getDealTemplate = (key: string) =>
+  client.get<DealDoc>(`/deal-templates/${key}`).then((r) => r.data);
+
 export const importConfig = (path: string, name?: string, overwrite = false) =>
   client
     .post<DealDoc>('/deals/import-config', { path, name, overwrite })

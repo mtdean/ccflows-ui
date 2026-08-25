@@ -81,7 +81,10 @@ waterfall, rates, actuals tapes, stress/MC settings, covenants, call and
 reinvestment config. The **⬇ JSON / ⬆ JSON** buttons in the top bar download
 and re-upload that exact file — it's the save format, the share format, and
 the archive format at once. Engine-native sections round-trip through
-`cashflows`' own codecs.
+`cashflows`' own codecs. The **TEMPLATES ▾** menu on the Deals page downloads
+hand-editable starter JSONs (amortizing A/B/R, royalty, CLO, forward-flow) —
+curve arrays may be any length (the engine pads by repeating the last value),
+and authoring notes ride in `meta.notes`.
 
 ### Rates, curve libraries, and config import
 

@@ -168,3 +168,24 @@ def test_rr_matrix_runs(client):
 
     replines, _ = engine_bridge.build_replines(doc)
     assert replines[0].loss_type == "roll_rate"
+
+
+# ── deal templates ─────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("key", ["amortizing", "royalty", "clo", "forward-flow"])
+def test_deal_templates_validate_and_run(client, key):
+    t = client.get(f"/api/deal-templates/{key}")
+    assert t.status_code == 200
+    doc = t.json()
+    v = client.post("/api/validate/deal", json=doc).json()
+    assert v["ok"], v["errors"]
+    r = client.post(f"/api/deals/t-tmpl-{key}/run", json={"doc": doc, "scenario": "base"})
+    assert r.status_code == 200, r.text
+
+
+def test_deal_templates_listed_and_compact(client):
+    keys = {t["key"] for t in client.get("/api/deal-templates").json()}
+    assert keys == {"amortizing", "royalty", "clo", "forward-flow"}
+    doc = client.get("/api/deal-templates/amortizing").json()
+    assert len(doc["run"]["replines"][0]["inline"]["cdr"]) == 1  # engine pads
+    assert "AUTHORING NOTES" in doc["meta"]["notes"]
