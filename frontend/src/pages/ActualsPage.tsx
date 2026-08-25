@@ -6,8 +6,9 @@ import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import Papa from 'papaparse';
 import { Download, Play, Trash2, Upload } from 'lucide-react';
-import { getActualsSchema, runRedline, validateActuals } from '../lib/api';
-import { apiErrorMessage, downloadJson, money, num, pct } from '../lib/utils';
+import { getActualsSchema, getCglStatus, runRedline, validateActuals } from '../lib/api';
+import { qk } from '../lib/queryKeys';
+import { apiErrorMessage, downloadJson, hashOf, money, num, pct } from '../lib/utils';
 import { useDealDraft } from '../lib/useDealDraft';
 import type { RedlineResult, TableData } from '../lib/types';
 import DataTable from '../components/shared/DataTable';
@@ -238,6 +239,96 @@ function RedlinePanel() {
   );
 }
 
+// CGL roll policy: for replines driven by a CGL / loss-timing curve, show
+// realized vs planned losses through the tape boundary and let the user pin
+// lifetime CGL (forward tail rescales) instead of the engine's default
+// carry-the-original-schedule roll.
+function CglRollPanel() {
+  const { slug, doc, update } = useDealDraft();
+  const hash = doc ? hashOf({ r: doc.run.replines, a: doc.actuals?.collateral?.length ?? 0 }) : '';
+  const status = useQuery({
+    queryKey: qk.cglStatus(slug ?? 'none', hash),
+    queryFn: () => getCglStatus(doc!),
+    enabled: doc != null,
+    retry: false,
+  });
+
+  const rows = status.data ?? [];
+  if (status.isError || rows.length === 0) return null; // no CGL-framework replines
+
+  return (
+    <Panel
+      title="CGL ROLL POLICY"
+      subtitle={<span className="dim">
+        loss_timing / cumulative-gross-loss replines — what happens to lifetime CGL when actuals land
+      </span>}
+    >
+      <div style={{ overflowX: 'auto' }}>
+        <table className="mono" style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+          <thead>
+            <tr className="dim" style={{ textAlign: 'left' }}>
+              <th style={{ padding: '2px 8px 2px 0' }}>REPLINE</th>
+              <th>FRAMEWORK</th>
+              <th style={{ textAlign: 'right' }}>LIFETIME CGL</th>
+              <th style={{ textAlign: 'right' }}>REALIZED</th>
+              <th style={{ textAlign: 'right' }}>PLANNED THRU TAPE</th>
+              <th style={{ textAlign: 'right' }}>FWD ×</th>
+              <th style={{ paddingLeft: 12 }}>ON ROLL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const entryIdx = (doc!.run.replines ?? []).findIndex(
+                (e) => String(e.inline.repline_id) === r.repline_id);
+              const policy = doc!.run.replines[entryIdx]?.cgl_policy ?? 'curve';
+              const underrun = r.realized != null && r.planned_to_boundary != null
+                ? r.realized - r.planned_to_boundary : null;
+              return (
+                <tr key={r.repline_id} style={{ borderTop: '1px solid var(--border)' }}>
+                  <td style={{ color: 'var(--text-accent)', padding: '3px 8px 3px 0' }}>{r.repline_id}</td>
+                  <td className="dim">{r.loss_type}</td>
+                  <td style={{ textAlign: 'right' }}>
+                    {money(r.lifetime_cgl)}
+                    {r.lifetime_cgl_pct != null && <span className="dim"> ({pct(r.lifetime_cgl_pct)})</span>}
+                  </td>
+                  <td style={{ textAlign: 'right' }}
+                    className={underrun == null ? 'dim' : underrun < 0 ? 'pos' : underrun > 0 ? 'neg' : ''}>
+                    {r.realized != null ? money(r.realized) : '— no tape —'}
+                  </td>
+                  <td style={{ textAlign: 'right' }} className="dim">
+                    {r.planned_to_boundary != null
+                      ? `${money(r.planned_to_boundary)} (m${r.boundary_month})` : '—'}
+                  </td>
+                  <td style={{ textAlign: 'right', color: policy === 'hold_constant' ? 'var(--warning)' : undefined }}>
+                    {policy === 'hold_constant' && r.forward_factor != null ? `×${num(r.forward_factor, 3)}` : '—'}
+                  </td>
+                  <td style={{ paddingLeft: 12 }}>
+                    <select className="input" value={policy}
+                      onChange={(e) => update((d) => {
+                        if (entryIdx < 0) return;
+                        if (e.target.value === 'hold_constant') d.run.replines[entryIdx].cgl_policy = 'hold_constant';
+                        else delete d.run.replines[entryIdx].cgl_policy;
+                      })}>
+                      <option value="curve">follow curve (CGL drifts with actuals)</option>
+                      <option value="hold_constant">hold CGL constant (rescale forward)</option>
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="dim" style={{ fontSize: 10, marginTop: 6 }}>
+        FOLLOW CURVE keeps the original forward loss schedule — an actual under-run permanently
+        lowers projected lifetime losses. HOLD CONSTANT rescales the remaining loss curve every
+        roll so lifetime gross losses stay pinned at CGL × face given whatever the tape realized.
+        The applied factor shows in run warnings and updates as new months load.
+      </div>
+    </Panel>
+  );
+}
+
 export default function ActualsPage() {
   const { doc, loading } = useDealDraft();
   if (!doc && !loading) return <EmptyState message="OPEN A DEAL FIRST" />;
@@ -245,6 +336,7 @@ export default function ActualsPage() {
   return (
     <div className="stack">
       <TapePanel level="collateral" title="COLLATERAL TAPE (SERVICER REMITTANCE)" />
+      <CglRollPanel />
       <PerformanceCharts />
       <RedlinePanel />
       <TapePanel level="bonds" title="BOND TAPE (TRUSTEE REMITTANCE)" />

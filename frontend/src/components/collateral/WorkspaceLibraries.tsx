@@ -9,13 +9,54 @@ import {
   buildRatesCurve,
   deleteCurveLib,
   deleteRatesCurve,
+  getPensfordStatus,
   listCurveLibs,
   listRatesCurves,
   putRatesCurve,
+  refreshPensford,
 } from '../../lib/api';
 import { qk } from '../../lib/queryKeys';
 import { apiErrorMessage, num } from '../../lib/utils';
 import Panel from '../shared/Panel';
+
+// Embedded crawler status: the daemon keeps 'pensford-sofr' fresh daily.
+function PensfordChip() {
+  const queryClient = useQueryClient();
+  const status = useQuery({
+    queryKey: qk.pensford,
+    queryFn: getPensfordStatus,
+    refetchInterval: 5 * 60_000,
+  });
+  const refresh = useMutation({
+    mutationFn: refreshPensford,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: qk.pensford });
+      queryClient.invalidateQueries({ queryKey: qk.ratesCurves });
+    },
+  });
+  const s = status.data;
+  if (!s) return null;
+  const fresh = s.fetched_at &&
+    Date.now() - new Date(s.fetched_at).getTime() < 36 * 3600 * 1000;
+  const color = s.last_error ? 'var(--negative)' : fresh ? 'var(--positive)' : 'var(--warning)';
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+      <span className="mono" style={{ fontSize: 10, color }}
+        title={s.last_error
+          ? `Crawler error: ${s.last_error}`
+          : s.fetched_at
+            ? `Pensford SOFR forwards fetched ${s.fetched_at} · crawler ${s.running ? `every ${s.interval_hours}h` : 'off'}`
+            : 'Not fetched yet'}>
+        ● PENSFORD {s.last_error ? 'ERROR' : fresh ? 'FRESH' : s.fetched_at ? 'STALE' : '—'}
+      </span>
+      <button className="btn" disabled={refresh.isPending}
+        title="Fetch the Pensford SOFR forward curve now"
+        onClick={() => refresh.mutate()}>
+        <Globe size={10} /> {refresh.isPending ? 'FETCHING' : 'FETCH NOW'}
+      </button>
+    </span>
+  );
+}
 
 export default function WorkspaceLibraries() {
   const queryClient = useQueryClient();
@@ -98,6 +139,7 @@ export default function WorkspaceLibraries() {
       <Panel
         title="RATE CURVES"
         subtitle={<span className="dim">shared across deals · named-curve rates mode</span>}
+        actions={<PensfordChip />}
       >
         {(curves.data ?? []).map((c) => (
           <div key={c.slug} className="field-row">

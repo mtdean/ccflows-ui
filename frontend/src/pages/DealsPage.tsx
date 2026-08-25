@@ -3,9 +3,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Copy, FolderOpen, Plus, Trash2 } from 'lucide-react';
+import { Copy, FolderOpen, History, Plus, Trash2 } from 'lucide-react';
 import {
-  createDeal, deleteDeal, duplicateDeal, getDealTemplate, importConfig, listDealTemplates, listDeals,
+  createDeal, deleteDeal, duplicateDeal, getDealSources, getDealTemplate, importConfig,
+  listDealTemplates, listDeals, loadDealSource,
 } from '../lib/api';
 import WorkspaceLibraries from '../components/collateral/WorkspaceLibraries';
 import { qk } from '../lib/queryKeys';
@@ -54,6 +55,75 @@ function TemplatesMenu() {
         </div>
       )}
     </div>
+  );
+}
+
+// Open a deal starting from a frozen artifact: an FM-approved close, an ABF
+// close, or a named scenario — the "load a month, pick the file" flow.
+function OpenFromMenu({ row }: { row: DealSummary }) {
+  const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
+  const { openDealWith } = useDealDraft();
+  const sources = useQuery({
+    queryKey: qk.dealSources(row.slug),
+    queryFn: () => getDealSources(row.slug),
+    enabled: open,
+  });
+
+  async function load(kind: 'scenario' | 'book_close', ref: string) {
+    setOpen(false);
+    try {
+      const { doc, origin } = await loadDealSource(row.slug, kind, ref);
+      openDealWith(row.slug, doc);
+      navigate('/collateral');
+      window.setTimeout(() => window.alert(
+        `Loaded ${origin} as the working draft (unsaved). SAVE to adopt it, or edit for the new month.`), 50);
+    } catch (err) {
+      window.alert(apiErrorMessage(err, 'Load failed'));
+    }
+  }
+
+  const closes = sources.data?.book_closes ?? [];
+  const scens = sources.data?.scenarios ?? [];
+  return (
+    <span style={{ position: 'relative', display: 'inline-block' }}>
+      <button className="btn" title="Open from a close or saved scenario"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>
+        <History size={12} />
+      </button>
+      {open && (
+        <div className="knob-menu" style={{ right: 0, left: 'auto', minWidth: 280, zIndex: 30 }}
+          onClick={(e) => e.stopPropagation()} onMouseLeave={() => setOpen(false)}>
+          <div className="knob-menu-group">OPEN {row.name.toUpperCase()} FROM…</div>
+          {sources.isLoading && <div className="knob-menu-item dim">loading…</div>}
+          {closes.map((c) => (
+            <button key={c.month} className="knob-menu-item"
+              onClick={() => void load('book_close', c.month)}>
+              <span style={{ color: c.status === 'fm_approved' ? 'var(--positive)' : 'var(--warning)' }}>
+                {c.status === 'fm_approved' ? '■ FM CLOSE' : '□ ABF CLOSE'} {c.month}
+              </span>
+              <span className="item-doc">
+                {c.status === 'fm_approved' ? `approved ${c.approved_at ?? ''}` : `built ${c.created_at ?? ''}`}
+              </span>
+            </button>
+          ))}
+          {scens.map((s) => (
+            <button key={s.slug} className="knob-menu-item"
+              onClick={() => void load('scenario', s.slug)}>
+              <span style={{ color: 'var(--text-accent)' }}>◆ SCENARIO {s.name}</span>
+              <span className="item-doc">
+                {s.stress.scenario}{s.stress.macro_scenario ? ` + ${s.stress.macro_scenario}` : ''} · saved {s.saved_at?.slice(0, 10)}
+              </span>
+            </button>
+          ))}
+          {!sources.isLoading && closes.length === 0 && scens.length === 0 && (
+            <div className="knob-menu-item dim" style={{ cursor: 'default' }}>
+              no closes or saved scenarios yet
+            </div>
+          )}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -114,6 +184,50 @@ export default function DealsPage() {
       sortValue: (r) => r.name,
     },
     {
+      key: 'status',
+      header: 'STATUS',
+      sortable: false,
+      render: (r) => (
+        <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+          {r.tape_through ? (
+            <span className="mono" title={`Remittance tape loaded through month ${r.tape_through} — runs splice actuals ahead of projections`}
+              style={{ color: 'var(--positive)', border: '1px solid var(--positive)', padding: '0 4px', fontSize: 9 }}>
+              TAPE m{r.tape_through}
+            </span>
+          ) : (
+            <span className="mono dim" title="No actuals loaded — pure projection"
+              style={{ border: '1px solid var(--border)', padding: '0 4px', fontSize: 9 }}>
+              PROJECTION
+            </span>
+          )}
+          {r.call_enabled && (
+            <span className="mono" title="Call mechanics enabled"
+              style={{ color: 'var(--warning)', border: '1px solid var(--warning)', padding: '0 4px', fontSize: 9 }}>
+              CALL
+            </span>
+          )}
+          {r.reinvest_enabled && (
+            <span className="mono" title="Reinvestment period enabled"
+              style={{ color: 'var(--text-accent)', border: '1px solid var(--text-accent)', padding: '0 4px', fontSize: 9 }}>
+              REINVEST
+            </span>
+          )}
+          {r.originations && (
+            <span className="mono" title="Forward-flow origination schedule"
+              style={{ color: 'var(--text-accent)', border: '1px solid var(--text-accent)', padding: '0 4px', fontSize: 9 }}>
+              FWD FLOW
+            </span>
+          )}
+          {r.uses_cgl && (
+            <span className="mono" title="Losses modeled as CGL + loss timing"
+              style={{ color: 'var(--warning)', border: '1px solid var(--warning)', padding: '0 4px', fontSize: 9 }}>
+              CGL
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
       key: 'total_upb',
       header: 'POOL UPB',
       align: 'right',
@@ -155,6 +269,7 @@ export default function DealsPage() {
           <button className="btn" title="Open" onClick={(e) => { e.stopPropagation(); open(r); }}>
             <FolderOpen size={12} />
           </button>
+          <OpenFromMenu row={r} />
           <button
             className="btn"
             title="Duplicate"

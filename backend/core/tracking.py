@@ -63,6 +63,7 @@ def build_tracked(doc: dict[str, Any], name: str) -> TrackedDeal:
         raise TrackingError("Monitoring is not supported on forward-flow origination "
                             "pools yet — the vintage build-up has no stable repline ids")
     replines, _ = engine_bridge.build_replines(doc)
+    engine_bridge.apply_cgl_policy(replines, doc)
     run_date = str((doc.get("run") or {}).get("run_date") or "2026-01-01")
     _, models, _ = engine_bridge.run_collateral(replines, doc.get("rates"), run_date)
     if len(models) > 1:

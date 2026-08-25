@@ -31,6 +31,9 @@ async def lifespan(app: FastAPI):
     import cashflows
 
     logger.info("ccflows-ui up — engine cashflows %s", cashflows.__version__)
+    from core import pensford_crawler
+
+    pensford_crawler.start()  # no-op when CCFLOWS_PENSFORD_AUTO=0
     yield
     shutdown_executor()
 

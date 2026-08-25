@@ -314,6 +314,24 @@ def test_fund_treasury_ledger(client):
         led2 = client.get("/api/portfolios/treasury-fund/treasury").json()
         assert "clipped" in led2["rows"][0]["notes"]
         assert led2["rows"][0]["credit_drawn"] == pytest.approx(1_000_000)
+
+        # revolver commitment: dry powder reads gross AND net of unfunded
+        pf2 = client.get("/api/portfolios/treasury-fund").json()
+        pf2["positions"][0]["commitment"] = 25_000_000  # funded face 10M
+        client.put("/api/portfolios/treasury-fund", json=pf2)
+        led3 = client.get("/api/portfolios/treasury-fund/treasury").json()
+        snap = led3["snapshot"]
+        assert snap["unfunded_commitments"] == pytest.approx(15_000_000)
+        assert snap["dry_powder_net"] == pytest.approx(snap["dry_powder"] - 15_000_000)
+        assert led3["rows"][0]["dry_powder_net"] == pytest.approx(
+            led3["rows"][0]["dry_powder"] - 15_000_000)
+        assert snap["commitments_by_position"][0]["unfunded"] == pytest.approx(15_000_000)
+        # analytics rows surface the unfunded slice too
+        a = client.get("/api/portfolios/treasury-fund/analytics").json()
+        assert a["rows"][0]["unfunded"] == pytest.approx(15_000_000)
+        # negative commitment rejected
+        pf2["positions"][0]["commitment"] = -1
+        assert client.put("/api/portfolios/treasury-fund", json=pf2).status_code == 422
     finally:
         client.delete("/api/portfolios/treasury-fund")
         client.delete("/api/deals/treasury-deal")

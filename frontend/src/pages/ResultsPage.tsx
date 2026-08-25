@@ -2,8 +2,10 @@
 
 import { useMemo, useState } from 'react';
 import * as Tabs from '@radix-ui/react-tabs';
-import { useQuery } from '@tanstack/react-query';
-import { getRunBalances } from '../lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { BookmarkPlus } from 'lucide-react';
+import { getRunBalances, saveScenarioRun } from '../lib/api';
+import { apiErrorMessage } from '../lib/utils';
 import { qk } from '../lib/queryKeys';
 import { fmtTime } from '../lib/utils';
 import { useDealDraft } from '../lib/useDealDraft';
@@ -21,8 +23,9 @@ import TrancheCashflowView from '../components/results/TrancheCashflowView';
 import TriggerTimelinePanel from '../components/results/TriggerTimelinePanel';
 
 export default function ResultsPage() {
-  const { doc, loading } = useDealDraft();
+  const { slug, doc, loading } = useDealDraft();
   const { runs, currentHash } = useRuns();
+  const queryClient = useQueryClient();
   const scenarios = Object.keys(runs);
   const [selected, setSelected] = useState<string | null>(null);
   const [tranche, setTranche] = useState<string | null>(null);
@@ -43,6 +46,24 @@ export default function ResultsPage() {
     enabled: runId != null,
     staleTime: Infinity,
     retry: false,
+  });
+
+  const saveScenario = useMutation({
+    mutationFn: (name: string) =>
+      saveScenarioRun(slug!, {
+        name,
+        doc,
+        scenario: run && run.scenario !== 'custom' ? run.scenario : 'base',
+        custom_multipliers: run?.scenario === 'custom'
+          ? doc?.stress.custom_multipliers ?? null : null,
+        price: doc?.export.price ?? 100,
+      }),
+    onSuccess: (saved) => {
+      queryClient.invalidateQueries({ queryKey: qk.scenarioRuns(slug!) });
+      queryClient.invalidateQueries({ queryKey: qk.dealSources(slug!) });
+      window.alert(`Scenario '${saved.name}' saved — loadable from DEALS → OPEN FROM…`);
+    },
+    onError: (err) => window.alert(apiErrorMessage(err, 'Scenario save failed')),
   });
 
   if (!doc && !loading) return <EmptyState message="OPEN A DEAL FIRST" />;
@@ -72,15 +93,30 @@ export default function ResultsPage() {
         actions={
           scenarios.length > 0 && (
             <div style={{ display: 'flex', gap: 4 }}>
-              {scenarios.map((s) => (
-                <button
-                  key={s}
-                  className={`chip ${s === scenario ? 'chip--active' : ''}`}
-                  onClick={() => setSelected(s)}
-                >
-                  {s.replace(/_/g, ' ')}
-                </button>
-              ))}
+              {scenarios.map((s) => {
+                const sevColor = s === 'base' ? 'var(--positive)'
+                  : /severe|recession/.test(s) ? 'var(--negative)'
+                  : 'var(--warning)';
+                return (
+                  <button
+                    key={s}
+                    className={`chip ${s === scenario ? 'chip--active' : ''}`}
+                    onClick={() => setSelected(s)}
+                  >
+                    <span style={{ color: sevColor, marginRight: 3 }}>●</span>
+                    {s.replace(/_/g, ' ')}
+                  </button>
+                );
+              })}
+              <button className="btn" disabled={!run || saveScenario.isPending}
+                title="Freeze this run (deal doc + stress + metrics) under a scenario name — loadable later from DEALS"
+                onClick={() => {
+                  const name = window.prompt('Save this run as scenario:',
+                    scenario === 'base' ? '' : (scenario ?? ''));
+                  if (name?.trim()) saveScenario.mutate(name.trim());
+                }}>
+                <BookmarkPlus size={11} /> SAVE SCENARIO
+              </button>
             </div>
           )
         }

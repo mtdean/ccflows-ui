@@ -5,6 +5,7 @@ import StatusBar from './components/layout/StatusBar';
 import TopBar from './components/layout/TopBar';
 import ActualsPage from './pages/ActualsPage';
 import AnalysisPage from './pages/AnalysisPage';
+import ClosesPage from './pages/ClosesPage';
 import CollateralPage from './pages/CollateralPage';
 import DealsPage from './pages/DealsPage';
 import ExportsPage from './pages/ExportsPage';
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/exports" element={<ExportsPage />} />
           <Route path="/portfolios" element={<PortfoliosPage />} />
+          <Route path="/closes" element={<ClosesPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

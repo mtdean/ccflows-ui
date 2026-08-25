@@ -20,6 +20,9 @@ const DRAFT_KEY = (slug: string) => `ccflows.draft.${slug}`;
 interface DealDraftContextValue {
   slug: string | null;
   openDeal: (slug: string | null) => void;
+  /** Open a deal with a supplied draft doc (e.g. a frozen close/scenario) —
+   * lands dirty against the saved file so SAVE adopts it explicitly. */
+  openDealWith: (slug: string, doc: DealDoc) => void;
   doc: DealDoc | null;
   loading: boolean;
   dirty: boolean;
@@ -40,6 +43,7 @@ export function DealDraftProvider({ children }: { children: ReactNode }) {
   const [savedJson, setSavedJson] = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<string | null>(null);
   const restoredFor = useRef<string | null>(null);
+  const pendingDoc = useRef<{ slug: string; doc: DealDoc } | null>(null);
 
   const query = useQuery({
     queryKey: slug ? qk.deal(slug) : ['deal', 'none'],
@@ -53,6 +57,12 @@ export function DealDraftProvider({ children }: { children: ReactNode }) {
   // restore once per open.
   useEffect(() => {
     if (!slug || !query.data) return;
+    if (pendingDoc.current?.slug === slug) {
+      setDoc(pendingDoc.current.doc);
+      pendingDoc.current = null;
+      setSavedJson(JSON.stringify(query.data));
+      return;
+    }
     let next = query.data;
     if (restoredFor.current !== slug) {
       restoredFor.current = slug;
@@ -90,6 +100,20 @@ export function DealDraftProvider({ children }: { children: ReactNode }) {
     else localStorage.removeItem(SLUG_KEY);
   }, []);
 
+  const openDealWith = useCallback((next: string, d: DealDoc) => {
+    if (next === slug && query.data) {
+      setDoc(d); // already open — just swap the draft
+      return;
+    }
+    pendingDoc.current = { slug: next, doc: d };
+    restoredFor.current = next; // skip the crash-mirror prompt
+    localStorage.removeItem(DRAFT_KEY(next));
+    setDoc(null);
+    setSavedJson(null);
+    setSlug(next);
+    localStorage.setItem(SLUG_KEY, next);
+  }, [slug, query.data]);
+
   const update = useCallback((mutator: (doc: DealDoc) => void) => {
     setDoc((current) => {
       if (!current) return current;
@@ -125,6 +149,7 @@ export function DealDraftProvider({ children }: { children: ReactNode }) {
     () => ({
       slug,
       openDeal,
+      openDealWith,
       doc,
       loading: slug != null && query.isLoading,
       dirty,
@@ -135,7 +160,7 @@ export function DealDraftProvider({ children }: { children: ReactNode }) {
       saveError: saveMutation.error,
       lastSaved,
     }),
-    [slug, openDeal, doc, query.isLoading, dirty, update, save, saveMutation.isPending, saveMutation.error, lastSaved],
+    [slug, openDeal, openDealWith, doc, query.isLoading, dirty, update, save, saveMutation.isPending, saveMutation.error, lastSaved],
   );
 
   return <DealDraftContext.Provider value={value}>{children}</DealDraftContext.Provider>;

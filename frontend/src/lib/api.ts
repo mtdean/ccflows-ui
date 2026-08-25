@@ -125,6 +125,15 @@ export const runRedline = (doc: DealDoc) =>
   client
     .post<import('./types').RedlineResult>('/actuals/redline', { doc })
     .then((r) => r.data);
+export interface CglStatusRow {
+  repline_id: string; loss_type: string; policy: string; face: number;
+  lifetime_cgl: number; lifetime_cgl_pct: number | null;
+  boundary_month: number | null; realized: number | null;
+  planned_to_boundary: number | null; forward_factor: number | null;
+}
+export const getCglStatus = (doc: DealDoc) =>
+  client.post<{ replines: CglStatusRow[] }>('/actuals/cgl-status', { doc })
+    .then((r) => r.data.replines);
 
 // ── rates curves + curve libraries + config import ────────────────────────
 export interface RatesCurveSummary {
@@ -279,6 +288,86 @@ export const deletePortfolio = (slug: string) =>
   client.delete(`/portfolios/${slug}`).then(() => undefined);
 export const getPortfolioAnalytics = (slug: string) =>
   client.get<PortfolioAnalytics>(`/portfolios/${slug}/analytics`).then((r) => r.data);
+export const getFmFinal = (slug: string) =>
+  client
+    .get<{ close_month: string; approved_at?: string; approved_by?: string;
+           name?: string; analytics: PortfolioAnalytics;
+           marks: Record<string, { tranches: Record<string, MarkNoteEntry> }> }>(
+      `/portfolios/${slug}/fm-final`)
+    .then((r) => r.data);
+
+// ── artifacts: scenario runs + book closes ────────────────────────────────
+export interface ScenarioRunSummary {
+  name: string; slug: string; saved_at: string; notes?: string;
+  stress: { scenario: string; custom_multipliers?: Record<string, number> | null;
+            macro_scenario?: string | null };
+  price: number; boundary_month: number | null;
+}
+export const saveScenarioRun = (slug: string, body: Rec) =>
+  post<ScenarioRunSummary & { metrics: Rec }>(`/deals/${slug}/scenario-runs`, body);
+export const listScenarioRuns = (slug: string) =>
+  client
+    .get<{ scenarios: ScenarioRunSummary[] }>(`/deals/${slug}/scenario-runs`)
+    .then((r) => r.data.scenarios);
+export const deleteScenarioRun = (slug: string, scenarioSlug: string) =>
+  client.delete(`/deals/${slug}/scenario-runs/${scenarioSlug}`).then(() => undefined);
+
+export interface BookCloseSummary {
+  month: string; status: 'abf' | 'fm_approved'; created_at?: string;
+  approved_at?: string | null; approved_by?: string | null; notes?: string;
+  n_deals: number; n_skipped: number;
+  changes: { replines: string[]; structure: string[]; marks: string[] };
+  new_deals: string[]; has_changes: boolean;
+}
+export interface MarkNoteEntry {
+  method?: string | null; schedule?: Record<string, number> | null;
+  note?: string; value_at_boundary?: number | null;
+}
+export interface BookClose {
+  month: string; status: 'abf' | 'fm_approved'; created_at?: string;
+  approved_at?: string; approved_by?: string; notes?: string;
+  deals: Record<string, { name?: string; boundary_month: number | null;
+                          warnings: string[]; metrics: Record<string, Rec>;
+                          doc: DealDoc }>;
+  skipped: Record<string, string>;
+  marks: Record<string, { tranches: Record<string, MarkNoteEntry> }>;
+  portfolios: Record<string, { name?: string; positions: Rec[];
+                               analytics: PortfolioAnalytics }>;
+  engine_closes?: Record<string, string>;
+}
+export const createBookClose = (body: Rec) =>
+  post<BookCloseSummary>('/book-closes', body);
+export const listBookCloses = () =>
+  client.get<{ closes: BookCloseSummary[] }>('/book-closes').then((r) => r.data.closes);
+export const getBookClose = (month: string) =>
+  client.get<BookClose>(`/book-closes/${month}`).then((r) => r.data);
+export const approveBookClose = (month: string, body: Rec) =>
+  post<BookCloseSummary & { engine_closes: Record<string, string> }>(
+    `/book-closes/${month}/approve`, body);
+export const deleteBookClose = (month: string, force = false) =>
+  client.delete(`/book-closes/${month}`, { params: { force } }).then(() => undefined);
+
+export interface DealSources {
+  scenarios: ScenarioRunSummary[];
+  book_closes: { month: string; status: 'abf' | 'fm_approved';
+                 approved_at?: string | null; created_at?: string }[];
+}
+export const getDealSources = (slug: string) =>
+  client.get<DealSources>(`/deals/${slug}/sources`).then((r) => r.data);
+export const loadDealSource = (slug: string, kind: 'scenario' | 'book_close', ref: string) =>
+  post<{ doc: DealDoc; origin: string }>(`/deals/${slug}/load-source`, { kind, ref });
+
+// ── pensford crawler ──────────────────────────────────────────────────────
+export interface PensfordStatus {
+  enabled: boolean; running: boolean; interval_hours: number;
+  last_attempt?: string | null; last_success?: string | null;
+  last_error?: string | null; curve_slug: string; curve_exists: boolean;
+  fetched_at?: string | null;
+}
+export const getPensfordStatus = () =>
+  client.get<PensfordStatus>('/pensford/status').then((r) => r.data);
+export const refreshPensford = () =>
+  client.post<PensfordStatus>('/pensford/refresh').then((r) => r.data);
 
 // ── jobs ──────────────────────────────────────────────────────────────────
 export const submitMonteCarloJob = (slug: string, body: Record<string, unknown>) =>

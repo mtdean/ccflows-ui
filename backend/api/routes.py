@@ -5,8 +5,9 @@ Top-level /api router: aggregates the domain routers.
 
 from fastapi import APIRouter
 
-from . import (actuals, analysis, curves_libs, deals, exports, jobs, marks_book,
-               monitor, portfolios, rates_curves, runs, schema, validate)
+from . import (actuals, analysis, artifacts, curves_libs, deals, exports, jobs,
+               marks_book, monitor, portfolios, rates_curves, runs, schema,
+               validate)
 
 router = APIRouter()
 
@@ -31,3 +32,4 @@ router.include_router(monitor.router)
 router.include_router(rates_curves.router)
 router.include_router(curves_libs.router)
 router.include_router(marks_book.router)
+router.include_router(artifacts.router)

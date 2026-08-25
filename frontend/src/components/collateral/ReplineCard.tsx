@@ -93,6 +93,120 @@ function CurveLibMenu({ entry }: { entry: ReplineEntry }) {
   );
 }
 
+// The loss assumption is one choice: a CDR vector, or CGL + loss-timing
+// (the stored loss_timing curve sums to CGL of face; the timing editor edits
+// the scaled curve, the CGL % field rescales it, the sum IS lifetime CGL).
+const LOSS_FIELDS = new Set(['cdr', 'loss_timing', 'cgl']);
+
+function curveSum(value: unknown): number {
+  if (!Array.isArray(value)) return 0;
+  return (value as unknown[]).reduce<number>(
+    (a, v) => a + (typeof v === 'number' ? v : 0), 0);
+}
+
+function LossInputRow({ entry, schema, errorsFor, rowProps, onChange }: {
+  entry: ReplineEntry;
+  schema: ReplineSchema;
+  errorsFor: (name: string) => ApiFieldError[];
+  rowProps: {
+    entry: ReplineEntry;
+    onScalar: (name: string, value: unknown) => void;
+    onCurve: (name: string, spec: CurveSpec, resolved: number[]) => void;
+    onRemove: (name: string) => void;
+  };
+  onChange: (mutator: (entry: ReplineEntry) => void) => void;
+}) {
+  const cdrField = schema.fields.find((f) => f.name === 'cdr');
+  const timingField = schema.fields.find((f) => f.name === 'loss_timing');
+  const cgl = curveSum(entry.inline.loss_timing);
+  const mode: 'cdr' | 'cgl' = cgl > 0 ? 'cgl' : 'cdr';
+
+  function toCdr() {
+    onChange((en) => {
+      en.inline.loss_timing = [0];
+      en.inline.cgl = 0;
+      if (en.curve_specs) delete en.curve_specs.loss_timing;
+      if (curveSum(en.inline.cdr) === 0) {
+        const flat = Array(361).fill(0.02 / 12);
+        en.inline.cdr = flat;
+        en.curve_specs = { ...(en.curve_specs ?? {}), cdr: specFromVector(flat) };
+      }
+    });
+  }
+
+  function toCgl() {
+    onChange((en) => {
+      en.inline.cdr = [0];
+      if (en.curve_specs) delete en.curve_specs.cdr;
+      if (curveSum(en.inline.loss_timing) === 0) {
+        const seeded = Array(361).fill(0);
+        const months = Math.min(48, Number(en.inline.term) || 48);
+        for (let m = 1; m <= months; m++) seeded[m] = 0.08 / months;
+        en.inline.loss_timing = seeded;
+        en.inline.cgl = 0.08;
+        en.curve_specs = { ...(en.curve_specs ?? {}), loss_timing: specFromVector(seeded) };
+      }
+    });
+  }
+
+  function setCglPct(pct: number) {
+    onChange((en) => {
+      const cur = curveSum(en.inline.loss_timing);
+      if (cur <= 0 || !Number.isFinite(pct) || pct < 0) return;
+      const scale = pct / 100 / cur;
+      const next = (en.inline.loss_timing as number[]).map((v) => v * scale);
+      en.inline.loss_timing = next;
+      en.inline.cgl = pct / 100;
+      en.curve_specs = { ...(en.curve_specs ?? {}), loss_timing: specFromVector(next) };
+    });
+  }
+
+  return (
+    <>
+      <div className="field-row">
+        <label title="One loss assumption: a monthly CDR vector, or a lifetime CGL spread over a loss-timing curve">
+          loss input
+        </label>
+        <span className="field-control" style={{ gap: 4 }}>
+          <button className={`chip ${mode === 'cdr' ? 'chip--active' : ''}`} onClick={toCdr}>
+            CDR VECTOR
+          </button>
+          <button className={`chip ${mode === 'cgl' ? 'chip--active' : ''}`}
+            style={mode === 'cgl' ? { color: 'var(--warning)', borderColor: 'var(--warning)' } : undefined}
+            onClick={toCgl}>
+            CGL + TIMING
+          </button>
+        </span>
+      </div>
+      {mode === 'cdr' && cdrField && (
+        <FieldRow field={cdrField} errors={errorsFor('cdr')} removable={false} {...rowProps} />
+      )}
+      {mode === 'cgl' && (
+        <>
+          <div className="field-row">
+            <label title="Lifetime cumulative gross loss, % of original face — rescales the timing curve">
+              CGL % of face
+            </label>
+            <span className="field-control">
+              <input className="input num" type="number" step={0.25} min={0}
+                style={{ width: 80, color: 'var(--warning)' }}
+                value={Number((cgl * 100).toFixed(4))}
+                onChange={(e) => setCglPct(Number(e.target.value))} />
+              <span className="dim" style={{ fontSize: 10 }}>
+                = timing curve sum · edit either side
+              </span>
+            </span>
+          </div>
+          {timingField && (
+            <FieldRow field={timingField} errors={errorsFor('loss_timing')}
+              removable={false} {...rowProps} />
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 function scalarDiffersFromDefault(field: FieldSpec, value: unknown): boolean {
   if (value == null) return false;
   if (Array.isArray(value)) {
@@ -130,12 +244,13 @@ export default function ReplineCard({
         names.add(f.name);
       }
     }
-    // preserve registry order
-    return schema.fields.filter((f) => names.has(f.name));
+    // preserve registry order; loss fields render through the LossInputRow
+    return schema.fields.filter((f) => names.has(f.name) && !LOSS_FIELDS.has(f.name));
   }, [schema, knobs, entry]);
 
   const available = useMemo(
-    () => schema.fields.filter((f) => !visible.some((v) => v.name === f.name)),
+    () => schema.fields.filter(
+      (f) => !visible.some((v) => v.name === f.name) && !LOSS_FIELDS.has(f.name)),
     [schema, visible],
   );
 
@@ -188,7 +303,28 @@ export default function ReplineCard({
     <Panel
       className="repline-card"
       title={`REPLINE ${index + 1}`}
-      subtitle={String(entry.inline.repline_id ?? '')}
+      subtitle={
+        <span>
+          {String(entry.inline.repline_id ?? '')}
+          {curveSum(entry.inline.loss_timing) > 0 ? (
+            <span className="mono" style={{ color: 'var(--warning)', fontSize: 9, marginLeft: 8 }}
+              title={`Losses: lifetime CGL ${(curveSum(entry.inline.loss_timing) * 100).toFixed(2)}% of face over the timing curve`}>
+              CGL {(curveSum(entry.inline.loss_timing) * 100).toFixed(1)}%
+            </span>
+          ) : (
+            <span className="mono" style={{ color: 'var(--text-accent)', fontSize: 9, marginLeft: 8 }}
+              title="Losses: monthly CDR vector">
+              CDR
+            </span>
+          )}
+          {entry.cgl_policy === 'hold_constant' && (
+            <span className="mono" style={{ color: 'var(--positive)', fontSize: 9, marginLeft: 6 }}
+              title="Roll policy: lifetime CGL held constant against actuals (set on ACTUALS)">
+              CGL PINNED
+            </span>
+          )}
+        </span>
+      }
       actions={
         <>
           <CurveLibMenu entry={entry} />
@@ -217,6 +353,8 @@ export default function ReplineCard({
       {coreFields.map((f) => (
         <FieldRow key={f.name} field={f} errors={errorsFor(f.name)} removable={false} {...rowProps} />
       ))}
+      <LossInputRow entry={entry} schema={schema} errorsFor={errorsFor}
+        rowProps={rowProps} onChange={onChange} />
       {extraFields.length > 0 && <div className="repline-divider" />}
       {extraFields.map((f) => (
         <FieldRow key={f.name} field={f} errors={errorsFor(f.name)} removable {...rowProps} />

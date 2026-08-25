@@ -167,6 +167,12 @@ def summary(doc: dict[str, Any]) -> dict[str, Any]:
             upb += float(entry.get("inline", {}).get("upb", 0) or 0)
         except (TypeError, ValueError):
             pass
+    actual_rows = (doc.get("actuals") or {}).get("collateral") or []
+    tape_through = max((int(r.get("month") or 0) for r in actual_rows), default=0)
+    uses_cgl = any(
+        isinstance(e.get("inline", {}).get("loss_timing"), list)
+        and any(v for v in e["inline"]["loss_timing"] if isinstance(v, (int, float)))
+        for e in replines)
     return {
         "slug": doc["meta"]["slug"],
         "name": doc["meta"]["name"],
@@ -175,4 +181,9 @@ def summary(doc: dict[str, Any]) -> dict[str, Any]:
         "n_replines": len(replines),
         "n_bonds": len(wf.get("bonds") or []),
         "total_upb": upb,
+        "tape_through": tape_through or None,
+        "call_enabled": bool((doc.get("call") or {}).get("enabled")),
+        "reinvest_enabled": bool((doc.get("reinvestment") or {}).get("enabled")),
+        "originations": bool(((doc.get("run") or {}).get("originations") or {}).get("schedule")),
+        "uses_cgl": uses_cgl,
     }

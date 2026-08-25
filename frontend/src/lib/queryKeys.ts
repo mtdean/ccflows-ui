@@ -32,4 +32,11 @@ export const qk = {
   ratesCurve: (slug: string) => ['ratesCurve', slug] as const,
   curveLibs: ['curveLibs'] as const,
   markBook: ['markBook'] as const,
+  scenarioRuns: (slug: string) => ['scenarioRuns', slug] as const,
+  bookCloses: ['bookCloses'] as const,
+  bookClose: (month: string) => ['bookClose', month] as const,
+  dealSources: (slug: string) => ['dealSources', slug] as const,
+  fmFinal: (slug: string) => ['fmFinal', slug] as const,
+  pensford: ['pensford'] as const,
+  cglStatus: (slug: string, hash: string) => ['cglStatus', slug, hash] as const,
 };

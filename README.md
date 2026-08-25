@@ -106,6 +106,13 @@ and authoring notes ride in `meta.notes`.
 
 ### Rates, curve libraries, and config import
 
+An **embedded Pensford crawler** keeps the `pensford-sofr` workspace curve
+fresh: a background daemon fetches the live SOFR forward table daily (1M/3M
+Term, 1M ISDA, 30D NYFED average, daily SOFR, Prime — monthly, decimals) and
+the RATE CURVES panel shows a freshness chip + FETCH NOW. Disable with
+`CCFLOWS_PENSFORD_AUTO=0`; cadence via `CCFLOWS_PENSFORD_INTERVAL_HOURS`.
+Point any deal at it with rates mode NAMED CURVE.
+
 Workspace-level **RATE CURVES** (Deals page): build named curves from a flat
 rate, month-offset points (linear interp), a **live Pensford SOFR forward
 fetch**, or a CSV upload (`date` + decimal rate columns — a Bloomberg export
@@ -154,6 +161,22 @@ Actual-vs-projected **CDR/CPR charts** and a **redline backtest** (variance,
 tracking error, hit rate) come free.
 
 ![Actual vs projected](docs/screenshots/28-actuals-performance.png)
+
+### CGL + loss timing, and the roll policy
+
+Repline losses are one choice on the card: a **CDR vector**, or **CGL +
+loss timing** — a lifetime cumulative gross loss (% of face) spread over a
+timing curve (the stored curve sums to CGL; edit either side and the other
+follows). Deals on a CGL framework get a **CGL ROLL POLICY** panel on
+ACTUALS: the engine's default roll keeps the *original forward loss
+schedule* (an actuals under-run permanently lowers lifetime losses);
+flipping a repline to **hold CGL constant** rescales the remaining loss
+curve on every roll so lifetime losses stay pinned at CGL × face given
+whatever the tape realized. The applied forward factor is shown in the
+panel and in run warnings, and updates as new months load.
+
+![CGL loss input](docs/screenshots/43-cgl-loss-input.png)
+![CGL roll policy](docs/screenshots/44-cgl-roll-policy.png)
 
 ### MONITOR — the surveillance workstation
 
@@ -234,6 +257,41 @@ projections) and **FM IRR** (terminate today at the fund's mark). Totals
 compute IRRs on the summed cashflow vectors.
 
 ![Portfolio](docs/screenshots/31-portfolio-irrs.png)
+
+Positions can carry a **commitment** beyond the funded face (revolver-style):
+the unfunded slice shows on the position and the treasury reads dry powder
+both ways — gross, and **net of committed-but-unfunded** cash.
+
+![Commitments](docs/screenshots/50-commitments.png)
+
+### CLOSES — scenario artifacts, the FM close, and approval
+
+Three kinds of frozen artifacts drive the month-end lifecycle:
+
+1. **Scenario runs** — SAVE SCENARIO on RESULTS freezes the run (deal doc +
+   stress + metrics) under any name you choose.
+2. **Book closes** — CLOSE MONTH on the CLOSES tab assembles the FM package:
+   every held deal's base-case run, the marks in force **with the marking
+   rationale notes** (each mark book entry carries a "why"), and each fund's
+   frozen analytics.
+3. **FM approval** — FM loads the package, validates, and hits FM APPROVE:
+   the close flips to `fm_approved`, tracked deals are forced to full engine
+   closes, and the approved close becomes what the PORTFOLIOS **FM FINAL**
+   view reports.
+
+The close timeline **flags months where assumptions moved** (repline /
+structure / mark changes vs the prior close, color-coded), and every
+portfolio row shows its **GOOD THRU** date — the last FM-approved close
+carrying that mark — colored green/amber/red by staleness.
+
+When you load a deal to model a new month, the **OPEN FROM…** menu on DEALS
+starts you from the FM close, the ABF close, or any saved scenario.
+
+![Book close](docs/screenshots/46-book-close.png)
+![Close timeline](docs/screenshots/47-close-timeline.png)
+![Good through](docs/screenshots/48-good-through.png)
+![FM final](docs/screenshots/49-fm-final.png)
+![Open from](docs/screenshots/51-open-from.png)
 
 ### EXPORTS
 

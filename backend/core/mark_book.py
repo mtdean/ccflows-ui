@@ -49,7 +49,8 @@ def _normalize_schedule(schedule: Any) -> dict[int, float]:
     return out
 
 
-def upsert(deal: str, tranche: str, method: str, schedule: Any) -> dict[str, Any]:
+def upsert(deal: str, tranche: str, method: str, schedule: Any,
+           note: str = "") -> dict[str, Any]:
     doc = load()
     entries = doc.setdefault("entries", {})
     norm = _normalize_schedule(schedule)
@@ -61,8 +62,15 @@ def upsert(deal: str, tranche: str, method: str, schedule: Any) -> dict[str, Any
         entries.setdefault(deal, {})[tranche] = {
             "method": method if method in ("spread", "dm", "yield") else "spread",
             "schedule": {str(k): v for k, v in sorted(norm.items())},
+            "note": str(note or ""),
         }
     return save(doc)
+
+
+def note_for(deal: str, tranche: str) -> str:
+    """The marking rationale recorded with the book entry ('' if none)."""
+    entry = (load().get("entries") or {}).get(deal, {}).get(tranche)
+    return str((entry or {}).get("note") or "")
 
 
 def resolve(deal: str, tranche: str, month: int = 0) -> tuple[str, float] | None:

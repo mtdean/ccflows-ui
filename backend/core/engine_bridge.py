@@ -34,6 +34,106 @@ def build_replines(doc: dict[str, Any]) -> tuple[list[ReplineInputs], list[str]]
     return replines, warns
 
 
+def cgl_status(replines: list[ReplineInputs], doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-repline CGL roll picture for replines on a cumulative-loss framework:
+    lifetime CGL implied by the curve, realized tape chargeoffs through the
+    boundary, the curve's planned losses through the same month, and the
+    forward scaling factor a hold-constant roll would apply.
+
+    Pure read — never mutates the replines. `apply_cgl_policy` consumes the
+    same rows to do the actual rescaling.
+    """
+    import numpy as np
+
+    rows = (doc.get("actuals") or {}).get("collateral") or []
+    entries = (doc.get("run") or {}).get("replines") or []
+    realized: dict[str, float] = {}
+    last_month: dict[str, int] = {}
+    for row in rows:
+        rid = str(row.get("repline_id"))
+        realized[rid] = realized.get(rid, 0.0) + float(row.get("chargeoffs") or 0.0)
+        last_month[rid] = max(last_month.get(rid, 0), int(row.get("month") or 0))
+
+    out: list[dict[str, Any]] = []
+    for entry, r in zip(entries, replines):
+        loss_type = str(r.loss_type)
+        if loss_type not in ("loss_timing", "cumulative_gross_losses"):
+            continue
+        rid = str(np.atleast_1d(r.repline_id)[0])
+        face = float(np.asarray(r.upb, dtype=float).sum())
+        k = last_month.get(rid)
+        if loss_type == "loss_timing":
+            timing = np.asarray(r.loss_timing, dtype=float)
+            lifetime = float(timing.sum()) * face
+            planned_to_k = float(timing[: (k or 0) + 1].sum()) * face if k else 0.0
+        else:
+            curve = np.asarray(r.cumulative_gross_losses, dtype=float)
+            lifetime = float(curve[-1]) * face
+            planned_to_k = float(curve[min(k, len(curve) - 1)]) * face if k else 0.0
+        planned_remaining = lifetime - planned_to_k
+        got = realized.get(rid, 0.0) if k else 0.0
+        target_remaining = max(lifetime - got, 0.0)
+        factor = (target_remaining / planned_remaining
+                  if k and planned_remaining > 1e-9 else None)
+        out.append({
+            "repline_id": rid,
+            "loss_type": loss_type,
+            "policy": str(entry.get("cgl_policy") or "curve"),
+            "face": face,
+            "lifetime_cgl": lifetime,
+            "lifetime_cgl_pct": lifetime / face if face > 0 else None,
+            "boundary_month": k,
+            "realized": got if k else None,
+            "planned_to_boundary": planned_to_k if k else None,
+            "forward_factor": factor,
+        })
+    return out
+
+
+def apply_cgl_policy(replines: list[ReplineInputs], doc: dict[str, Any]) -> list[str]:
+    """Hold-CGL-constant roll: for replines flagged ``cgl_policy: "hold_constant"``
+    on a loss_timing / cumulative_gross_losses framework, rescale the loss
+    curve past the tape boundary so projected lifetime gross losses stay at
+    the curve's CGL given realized chargeoffs. The engine's own splice keeps
+    the *original forward schedule* (an under-run of actuals lowers lifetime
+    losses); this policy is the explicit alternative. Mutates in place."""
+    import numpy as np
+
+    entries = (doc.get("run") or {}).get("replines") or []
+    status = {s["repline_id"]: s for s in cgl_status(replines, doc)}
+    notes: list[str] = []
+    for entry, r in zip(entries, replines):
+        if str(entry.get("cgl_policy") or "") != "hold_constant":
+            continue
+        rid = str(np.atleast_1d(r.repline_id)[0])
+        s = status.get(rid)
+        if s is None:
+            if entries:  # flagged but not on a CGL framework
+                notes.append(f"{rid}: cgl_policy ignored — loss framework is "
+                             f"{r.loss_type!r} (needs loss_timing or "
+                             f"cumulative_gross_losses)")
+            continue
+        k, factor = s["boundary_month"], s["forward_factor"]
+        if not k:
+            continue  # no tape rows for this repline yet
+        if factor is None:
+            if s["realized"] is not None and s["realized"] < s["lifetime_cgl"]:
+                notes.append(f"{rid}: CGL hold-constant skipped — curve carries no "
+                             f"losses after month {k} to rescale")
+            continue
+        if r.loss_type == "loss_timing":
+            r.loss_timing[k + 1:] *= factor
+        else:
+            curve = np.asarray(r.cumulative_gross_losses, dtype=float)
+            at_k = float(curve[min(k, len(curve) - 1)])
+            r.cumulative_gross_losses[k + 1:] = at_k + (curve[k + 1:] - at_k) * factor
+        notes.append(
+            f"{rid}: CGL held constant at {s['lifetime_cgl_pct']:.2%} of face — "
+            f"realized ${s['realized']:,.0f} vs ${s['planned_to_boundary']:,.0f} "
+            f"planned through m{k}; forward losses x {factor:.3f}")
+    return notes
+
+
 def resolve_stress(scenario: str | None,
                    custom: dict[str, Any] | None) -> CurveStressMultipliers | None:
     """Scenario name / custom multiplier dict -> CurveStressMultipliers."""
@@ -121,6 +221,7 @@ def run_deal(doc: dict[str, Any], scenario: str = "base",
     mult = resolve_stress(scenario, custom_multipliers)
     macro = macro_scenario or (stress_section.get("macro_scenario") if scenario == "__doc__" else None)
     replines = apply_stress(replines, mult, macro)
+    warns += apply_cgl_policy(replines, doc)
 
     wf_spec = doc.get("waterfall")
     if not wf_spec:

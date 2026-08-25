@@ -63,6 +63,8 @@ def check_structure(doc: Any) -> None:
                 raise DocumentError("face must be > 0", ["positions", i, "face"])
             if float(p.get("cost_basis", 0)) < 0:
                 raise DocumentError("cost_basis must be >= 0", ["positions", i, "cost_basis"])
+            if float(p.get("commitment") or 0) < 0:
+                raise DocumentError("commitment must be >= 0", ["positions", i, "commitment"])
         except (TypeError, ValueError) as exc:
             raise DocumentError(f"bad number in position: {exc}", ["positions", i]) from exc
     marks = doc.get("marks")

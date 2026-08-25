@@ -7,6 +7,7 @@ import { Download, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import {
   createPortfolio,
   deletePortfolio,
+  getFmFinal,
   getPortfolio,
   getPortfolioAnalytics,
   listDeals,
@@ -28,6 +29,23 @@ import TreasuryPanel from '../components/portfolio/TreasuryPanel';
 function pnlClass(v: number | null | undefined): string {
   if (v == null || v === 0) return 'dim';
   return v > 0 ? 'pos' : 'neg';
+}
+
+// Months between an FM-approved close month (YYYY-MM) and today: the mark's
+// "good through" age. 0-1 fresh, 2-3 aging, 4+ stale.
+function goodThroughAge(month: string | null | undefined): number | null {
+  if (!month) return null;
+  const [y, m] = month.split('-').map(Number);
+  if (!y || !m) return null;
+  const now = new Date();
+  return (now.getFullYear() - y) * 12 + (now.getMonth() + 1 - m);
+}
+
+function goodThroughColor(age: number | null): string {
+  if (age == null) return 'var(--text-dim)';
+  if (age <= 1) return 'var(--positive)';
+  if (age <= 3) return 'var(--warning)';
+  return 'var(--negative)';
 }
 
 export default function PortfoliosPage() {
@@ -93,26 +111,64 @@ export default function PortfoliosPage() {
     save.mutate(next);
   };
 
-  const rows = analytics.data?.rows ?? [];
-  const totals = analytics.data?.totals;
+  const [view, setView] = useState<'live' | 'final'>('live');
+  const fmFinal = useQuery({
+    queryKey: slug ? qk.fmFinal(slug) : ['fmFinal', 'none'],
+    queryFn: () => getFmFinal(slug!),
+    enabled: slug != null && view === 'final',
+    retry: false,
+  });
+
+  const shown = view === 'final' ? fmFinal.data?.analytics : analytics.data;
+  const rows = shown?.rows ?? [];
+  const totals = shown?.totals;
   const markUnit = (analytics.data?.method ?? doc.data?.marks.method) === 'yield' ? '' : 'bp';
 
   const columns: Column<PortfolioAnalyticsRow>[] = useMemo(() => [
     { key: 'deal', header: 'DEAL', render: (r) => <span className="dim">{r.deal}</span> },
     { key: 'tranche', header: 'TRANCHE', render: (r) => <span style={{ color: 'var(--text-accent)' }}>{r.tranche}</span> },
-    { key: 'face', header: 'FACE', align: 'right', render: (r) => <span className="num mono">{money(r.face)}</span>, sortValue: (r) => r.face },
+    {
+      key: 'face', header: 'FACE', align: 'right', sortValue: (r) => r.face,
+      render: (r) => (
+        <span className="num mono">
+          {money(r.face)}
+          {(r.unfunded ?? 0) > 0 && (
+            <span style={{ color: 'var(--warning)', fontSize: 9 }}
+              title={`Commitment ${money(r.commitment)} — ${money(r.unfunded)} committed but unfunded`}>
+              {' '}+{money(r.unfunded)}u
+            </span>
+          )}
+        </span>
+      ),
+    },
     { key: 'factor', header: 'FACTOR', align: 'right', render: (r) => <span className="num mono">{r.factor != null ? num(r.factor, 3) : '—'}</span> },
     {
       key: 'mark_value', header: 'MARK', align: 'right',
       render: (r) => (
         <span className="num mono dim"
-          title={r.mark_source === 'book' ? 'From the workspace mark book'
-            : r.mark_source === 'override' ? 'Per-position override' : 'Fund default'}>
+          title={(r.mark_source === 'book' ? 'From the workspace mark book'
+            : r.mark_source === 'override' ? 'Per-position override' : 'Fund default')
+            + (r.mark_note ? `\nNote: ${r.mark_note}` : '')}>
           {r.mark_value != null ? `${num(r.mark_value, r.mark_method === 'yield' ? 3 : 0)}${r.mark_method === 'yield' ? '' : 'bp'}` : '—'}
           {r.mark_source === 'book' && <span style={{ color: 'var(--text-accent)', fontSize: 9 }}> ᴮ</span>}
           {r.mark_source === 'override' && <span style={{ color: 'var(--warning)', fontSize: 9 }}> ᴼ</span>}
+          {!!r.mark_note && <span style={{ color: 'var(--text-accent)', fontSize: 9 }}> ✎</span>}
         </span>
       ),
+    },
+    {
+      key: 'good_through', header: 'GOOD THRU', align: 'right', sortValue: (r) => r.good_through ?? '',
+      render: (r) => {
+        const age = goodThroughAge(r.good_through);
+        return (
+          <span className="num mono" style={{ color: goodThroughColor(age) }}
+            title={r.good_through
+              ? `Last FM-approved mark: close ${r.good_through} (approved ${r.good_through_at ?? '—'})`
+              : 'No FM-approved close carries this mark yet'}>
+            {r.good_through ?? '—'}
+          </span>
+        );
+      },
     },
     { key: 'price', header: 'PRICE', align: 'right', render: (r) => <span className="num mono">{r.price != null ? num(r.price, 3) : '—'}</span>, sortValue: (r) => r.price },
     { key: 'market_value', header: 'MARKET VALUE', align: 'right', render: (r) => <span className="num mono">{money(r.market_value)}</span>, sortValue: (r) => r.market_value },
@@ -208,6 +264,18 @@ export default function PortfoliosPage() {
               }
               actions={
                 <div style={{ display: 'flex', gap: 4 }}>
+                  <button className="btn"
+                    style={view === 'live' ? { color: 'var(--text-accent)', borderColor: 'var(--text-accent)' } : undefined}
+                    title="Live marks against the freshest runs"
+                    onClick={() => setView('live')}>
+                    LIVE
+                  </button>
+                  <button className="btn"
+                    style={view === 'final' ? { color: 'var(--positive)', borderColor: 'var(--positive)' } : undefined}
+                    title="The frozen analytics from the latest FM-approved book close"
+                    onClick={() => setView('final')}>
+                    FM FINAL
+                  </button>
                   <button className="btn" title="Refresh analytics"
                     onClick={() => queryClient.invalidateQueries({ queryKey: qk.portfolioAnalytics(slug) })}>
                     <RefreshCw size={11} /> REFRESH
@@ -226,16 +294,26 @@ export default function PortfoliosPage() {
               }
             >
               {error && <div className="field-error-msg" style={{ textAlign: 'left' }}>{error}</div>}
-              {doc.data.positions.length === 0 ? (
+              {view === 'final' && fmFinal.isError ? (
+                <EmptyState message="NO FM-APPROVED BOOK CLOSE YET — APPROVE ONE ON THE CLOSES TAB" />
+              ) : view === 'final' && fmFinal.isLoading ? (
+                <LoadingCursor label="LOADING FM CLOSE" />
+              ) : doc.data.positions.length === 0 && view === 'live' ? (
                 <EmptyState message="NO POSITIONS — ADD STAKES BELOW" />
-              ) : analytics.isLoading || analytics.isFetching ? (
+              ) : view === 'live' && (analytics.isLoading || analytics.isFetching) ? (
                 <LoadingCursor label="MARKING BOOK (re-running stale deals)" />
-              ) : analytics.isError ? (
+              ) : view === 'live' && analytics.isError ? (
                 <div className="field-error-msg" style={{ textAlign: 'left' }}>
                   {apiErrorMessage(analytics.error, 'Analytics failed')}
                 </div>
               ) : (
                 <>
+                  {view === 'final' && fmFinal.data && (
+                    <div className="mono" style={{ fontSize: 11, marginBottom: 6, color: 'var(--positive)' }}>
+                      ■ FINAL — close {fmFinal.data.close_month}, approved by{' '}
+                      {fmFinal.data.approved_by ?? 'FM'} {fmFinal.data.approved_at ? `at ${fmFinal.data.approved_at}` : ''}
+                    </div>
+                  )}
                   <div style={{ overflowX: 'auto' }}>
                     <DataTable columns={columns} rows={rows} rowKey={(r) => String(r.index)} emptyMessage="—" />
                   </div>
@@ -254,7 +332,7 @@ export default function PortfoliosPage() {
                       {totals.fm_irr != null && <span>FM IRR {pct(totals.fm_irr)}</span>}
                     </div>
                   )}
-                  {analytics.data && (
+                  {view === 'live' && analytics.data && (
                     <div className="dim" style={{ fontSize: 10, marginTop: 6 }}>
                       {Object.entries(analytics.data.deals).map(([d, f]) => (
                         <span key={d} style={{ marginRight: 14 }}>

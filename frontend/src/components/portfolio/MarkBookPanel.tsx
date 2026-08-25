@@ -22,6 +22,7 @@ interface BookRow {
   boundary_month: number;
   method: string | null;
   schedule: Record<string, number> | null;
+  note: string;
   current_value: number | null;
   held_by: string[];
 }
@@ -101,14 +102,23 @@ export default function MarkBookPanel() {
   }
 
   const columns: Column<BookRow>[] = [
-    { key: 'deal_name', header: 'DEAL', render: (r) => <span className="dim">{r.deal_name}</span> },
+    {
+      key: 'deal_name', header: 'DEAL',
+      render: (r) => (
+        <span className={r.held_by.length ? '' : 'dim'}
+          title={r.held_by.length ? `Held by ${r.held_by.join(', ')}` : 'Not held by any fund'}>
+          {r.held_by.length > 0 && <span style={{ color: 'var(--positive)', marginRight: 4 }}>●</span>}
+          {r.deal_name}
+        </span>
+      ),
+    },
     { key: 'tranche', header: 'TRANCHE', render: (r) => <span style={{ color: 'var(--text-accent)' }}>{r.tranche}{r.floating ? ' ·FLT' : ''}</span> },
     {
       key: 'method', header: 'METHOD', sortable: false,
       render: (r) => (
         <select className="input" value={r.method ?? 'spread'}
           onChange={(e) => upsert.mutate({ deal: r.deal, tranche: r.tranche,
-            method: e.target.value, schedule: r.schedule ?? {} })}>
+            method: e.target.value, schedule: r.schedule ?? {}, note: r.note })}>
           <option value="spread">spread bp</option>
           <option value="dm">dm bp</option>
           <option value="yield">yield dec</option>
@@ -129,7 +139,26 @@ export default function MarkBookPanel() {
             const current = scheduleText(r.schedule);
             if (e.target.value.trim() === current.trim()) return;
             upsert.mutate({ deal: r.deal, tranche: r.tranche,
-              method: r.method ?? 'spread', schedule: next });
+              method: r.method ?? 'spread', schedule: next, note: r.note });
+          }}
+        />
+      ),
+    },
+    {
+      key: 'note', header: 'WHY (NOTE FOR FM)', sortable: false,
+      render: (r) => (
+        <input
+          className="input"
+          style={{ width: 220 }}
+          placeholder="marking rationale…"
+          defaultValue={r.note}
+          key={`${r.deal}:${r.tranche}:note:${r.note}`}
+          title="Explains the mark — carried onto the month-end close FM validates"
+          onBlur={(e) => {
+            if (e.target.value.trim() === r.note.trim()) return;
+            upsert.mutate({ deal: r.deal, tranche: r.tranche,
+              method: r.method ?? 'spread', schedule: r.schedule ?? {},
+              note: e.target.value.trim() });
           }}
         />
       ),

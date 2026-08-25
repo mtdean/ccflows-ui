@@ -13,6 +13,7 @@ sys.path.insert(0, str(BACKEND))
 _tmp = tempfile.mkdtemp(prefix="ccflows-test-")
 os.environ["CCFLOWS_WORKSPACE"] = str(Path(_tmp) / "workspace")
 os.environ["CCFLOWS_EXPORTS"] = str(Path(_tmp) / "exports")
+os.environ["CCFLOWS_PENSFORD_AUTO"] = "0"  # no live crawling from the test suite
 
 import config  # noqa: E402  (env must be set before this import)
 

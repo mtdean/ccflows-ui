@@ -70,6 +70,21 @@ def validate_actuals(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     })
 
 
+@router.post("/actuals/cgl-status")
+def cgl_roll_status(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """{doc} -> per-repline CGL roll picture for cumulative-loss frameworks:
+    lifetime CGL, realized vs planned chargeoffs through the tape boundary,
+    and the forward factor a hold-constant roll applies."""
+    doc = body.get("doc")
+    if not isinstance(doc, dict):
+        raise HTTPException(status_code=422, detail="Body needs the deal doc")
+    try:
+        replines, _ = engine_bridge.build_replines(doc)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return clean({"replines": engine_bridge.cgl_status(replines, doc)})
+
+
 @router.post("/actuals/redline")
 def post_redline(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     """Model-vs-actual backtest over the deal doc's collateral tape."""

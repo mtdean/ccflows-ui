@@ -158,6 +158,23 @@ def build_ledger(doc: dict[str, Any], horizon_months: int = 24) -> dict[str, Any
         events_by_period.setdefault(
             pd.Period(str(e["month"])[:7], freq="M"), []).append(e)
 
+    # Committed-but-unfunded: revolver-style positions where the fund's
+    # commitment exceeds the funded face. Dry powder reads both ways —
+    # gross, and net of what could be called.
+    commitments_by_position: list[dict[str, Any]] = []
+    unfunded_commitments = 0.0
+    for p in doc.get("positions") or []:
+        commitment = float(p.get("commitment") or 0.0)
+        if commitment <= 0:
+            continue
+        funded = float(p.get("face") or 0.0)
+        unfunded = max(0.0, commitment - funded)
+        unfunded_commitments += unfunded
+        commitments_by_position.append({
+            "deal": p.get("deal"), "tranche": p.get("tranche"),
+            "commitment": commitment, "funded": funded, "unfunded": unfunded,
+        })
+
     rows: list[dict[str, Any]] = []
     cash = float(treasury.get("opening_cash") or 0.0)
     drawn = 0.0
@@ -216,6 +233,7 @@ def build_ledger(doc: dict[str, Any], horizon_months: int = 24) -> dict[str, Any
             "credit_drawn": drawn,
             "credit_available": max(0.0, limit - drawn),
             "dry_powder": cash + max(0.0, limit - drawn),
+            "dry_powder_net": cash + max(0.0, limit - drawn) - unfunded_commitments,
             "notes": "; ".join(notes),
         })
         per += 1
@@ -228,6 +246,9 @@ def build_ledger(doc: dict[str, Any], horizon_months: int = 24) -> dict[str, Any
         "credit_drawn": snap_row["credit_drawn"],
         "credit_available": snap_row["credit_available"],
         "dry_powder": snap_row["dry_powder"],
+        "dry_powder_net": snap_row["dry_powder_net"],
+        "unfunded_commitments": unfunded_commitments,
+        "commitments_by_position": commitments_by_position,
         "cumulative_receipts": sum(r["deal_receipts"] for r in rows
                                    if r["period"] <= snap_row["period"]),
         "cumulative_purchases": sum(r["purchases"] for r in rows

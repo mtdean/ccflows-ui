@@ -42,7 +42,7 @@ const LEDGER_COLS: [string, string][] = [
   ['credit_draws', '+DRAW'], ['credit_repayments', '−REPAY'], ['credit_interest', '−INT'],
   ['purchases', '−PURCHASES'], ['deal_receipts', '+RECEIPTS'],
   ['net_cash_flow', 'NET'], ['closing_cash', 'CLOSE'],
-  ['credit_drawn', 'DRAWN'], ['dry_powder', 'DRY POWDER'],
+  ['credit_drawn', 'DRAWN'], ['dry_powder', 'DRY POWDER'], ['dry_powder_net', 'NET OF CMT'],
 ];
 
 export default function TreasuryPanel({ slug }: { slug: string }) {
@@ -108,7 +108,9 @@ export default function TreasuryPanel({ slug }: { slug: string }) {
         </span>
       ),
     },
-    ...LEDGER_COLS.map(([key, header]): Column<Row> => ({
+    ...LEDGER_COLS.filter(([key]) =>
+      key !== 'dry_powder_net' || Number(snap?.unfunded_commitments ?? 0) > 0,
+    ).map(([key, header]): Column<Row> => ({
       key, header, align: 'right', sortable: false,
       render: (r) => {
         const v = Number(r[key] ?? 0);
@@ -116,6 +118,7 @@ export default function TreasuryPanel({ slug }: { slug: string }) {
           return <span className="dim">—</span>;
         }
         const cls = key === 'dry_powder' ? 'pos'
+          : key === 'dry_powder_net' ? (v >= 0 ? '' : 'neg')
           : key === 'net_cash_flow' ? (v >= 0 ? 'pos' : 'neg')
           : key === 'closing_cash' && v < 0 ? 'neg' : '';
         return <span className={`num mono ${cls}`}>{moneyFull(v)}</span>;
@@ -150,6 +153,13 @@ export default function TreasuryPanel({ slug }: { slug: string }) {
           <span className="mono">
             as of {String(snap.as_of)} · cash {money(Number(snap.cash))} · drawn {money(Number(snap.credit_drawn))} ·{' '}
             <span className="pos">dry powder {money(Number(snap.dry_powder))}</span>
+            {Number(snap.unfunded_commitments ?? 0) > 0 && (
+              <span style={{ color: 'var(--warning)' }}
+                title="Committed to positions but not yet funded — callable against your cash">
+                {' '}· net of {money(Number(snap.unfunded_commitments))} unfunded cmt ={' '}
+                {money(Number(snap.dry_powder_net))}
+              </span>
+            )}
           </span>
         ) : (
           <span className="dim">monthly cash ledger — receipts land by each deal's calendar</span>

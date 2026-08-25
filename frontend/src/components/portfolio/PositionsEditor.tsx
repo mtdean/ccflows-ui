@@ -62,6 +62,28 @@ export default function PositionsEditor({ doc, deals, onChange, saving }: Props)
               value={p.cost_basis}
               onChange={(e) => onChange((d) => { d.positions[i].cost_basis = Number(e.target.value); })}
             />
+            <span className="dim" style={{ fontSize: 10 }}
+              title="Total commitment for revolver-style positions (blank = fully funded). Unfunded = commitment − face; treasury nets it out of dry powder.">
+              cmt
+            </span>
+            <input
+              className="input num"
+              style={{ width: 90, ...(Number(p.commitment ?? 0) > p.face
+                ? { color: 'var(--warning)', borderColor: 'var(--warning)' } : {}) }}
+              type="number"
+              step={1000000}
+              placeholder="—"
+              value={p.commitment ?? ''}
+              title={Number(p.commitment ?? 0) > p.face
+                ? `Unfunded ${num(Number(p.commitment) - p.face, 0)} — committed but not drawn`
+                : 'Total commitment (blank = none)'}
+              onChange={(e) =>
+                onChange((d) => {
+                  if (e.target.value === '') delete d.positions[i].commitment;
+                  else d.positions[i].commitment = Number(e.target.value);
+                })
+              }
+            />
             <span className="dim" style={{ fontSize: 10 }}>mark</span>
             <input
               className="input num"

@@ -104,6 +104,9 @@ export interface ReplineEntry {
   inline: ReplineInline;
   /** UI recipes per curve field so reopening an editor shows ramp handles. */
   curve_specs?: Record<string, CurveSpec>;
+  /** CGL roll policy for cumulative-loss frameworks: "hold_constant" rescales
+   * forward loss timing so lifetime CGL survives actuals under/over-runs. */
+  cgl_policy?: 'curve' | 'hold_constant';
 }
 
 export interface BondSpec {
@@ -248,6 +251,11 @@ export interface DealSummary {
   n_replines: number;
   n_bonds: number;
   total_upb: number;
+  tape_through?: number | null;
+  call_enabled?: boolean;
+  reinvest_enabled?: boolean;
+  originations?: boolean;
+  uses_cgl?: boolean;
   corrupt?: boolean;
 }
 
@@ -388,6 +396,8 @@ export interface PortfolioPosition {
   face: number;
   cost_basis: number;
   acquired_month?: number;
+  /** Total commitment for revolver-style positions; unfunded = commitment − face. */
+  commitment?: number;
 }
 
 export interface PortfolioDoc {
@@ -415,6 +425,11 @@ export interface PortfolioAnalyticsRow {
   fm_irr?: number | null;
   mark_method?: string;
   mark_source?: 'override' | 'book' | 'default';
+  mark_note?: string;
+  good_through?: string | null;
+  good_through_at?: string | null;
+  commitment?: number | null;
+  unfunded?: number | null;
   index: number;
   deal: string;
   tranche: string;

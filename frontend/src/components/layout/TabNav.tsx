@@ -13,6 +13,7 @@ const TABS = [
   { to: '/analysis', label: 'ANALYSIS', needsDeal: true },
   { to: '/exports', label: 'EXPORTS', needsDeal: true },
   { to: '/portfolios', label: 'PORTFOLIOS', needsDeal: false },
+  { to: '/closes', label: 'CLOSES', needsDeal: false },
 ];
 
 export default function TabNav() {

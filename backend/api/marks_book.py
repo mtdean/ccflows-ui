@@ -54,6 +54,7 @@ def get_mark_book() -> dict[str, Any]:
                 "boundary_month": boundary,
                 "method": entry.get("method") if entry else None,
                 "schedule": entry.get("schedule") if entry else None,
+                "note": (entry.get("note") or "") if entry else "",
                 "current_value": resolved[1] if resolved else None,
                 "held_by": sorted(set(holders.get((deal["slug"], tranche), []))),
             })
@@ -62,13 +63,14 @@ def get_mark_book() -> dict[str, Any]:
 
 @router.put("/mark-book/entry")
 def put_entry(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    """{deal, tranche, method, schedule: {month: value}} — empty schedule deletes."""
+    """{deal, tranche, method, schedule: {month: value}, note?} — empty schedule
+    deletes. The note is the marking rationale FM sees on the book close."""
     deal = str(body.get("deal") or "")
     tranche = str(body.get("tranche") or "")
     if not deal or not tranche:
         raise HTTPException(status_code=422, detail="deal and tranche are required")
     mark_book.upsert(deal, tranche, str(body.get("method") or "spread"),
-                     body.get("schedule") or {})
+                     body.get("schedule") or {}, note=str(body.get("note") or ""))
     return {"ok": True}
 
 

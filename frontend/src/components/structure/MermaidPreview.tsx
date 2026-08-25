@@ -35,6 +35,38 @@ function loadMermaid() {
 
 let renderSeq = 0;
 
+// The engine emits one flowchart with the capital-structure subgraph beside
+// the step chain, which squeezes the waterfall. Split it into two stacked
+// diagrams: the capital stack (horizontal) on top, the waterfall below at
+// full width.
+function splitDiagram(text: string): { capital: string | null; waterfall: string } {
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => l.trim().startsWith('subgraph capital'));
+  if (start === -1) return { capital: null, waterfall: text };
+  let depth = 0;
+  let end = start;
+  for (let i = start; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (t.startsWith('subgraph')) depth++;
+    else if (t === 'end') {
+      depth--;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  const sub = lines
+    .slice(start, end + 1)
+    .map((l) => l.replace(/direction\s+\w+/, 'direction LR'));
+  // mermaid ignores subgraph direction when nodes are edge-less — an
+  // invisible chain (~~~) pins the tranches into one horizontal row
+  const ids = sub.map((l) => l.trim().match(/^([A-Za-z0-9_]+)\[/)?.[1]).filter(Boolean);
+  if (ids.length > 1) sub.splice(sub.length - 1, 0, `        ${ids.join(' ~~~ ')}`);
+  const rest = [...lines.slice(0, start), ...lines.slice(end + 1)];
+  return {
+    capital: ['flowchart LR', ...sub].join('\n'),
+    waterfall: rest.join('\n'),
+  };
+}
+
 interface Props {
   waterfall: WaterfallSpec;
 }
@@ -42,6 +74,7 @@ interface Props {
 export default function MermaidPreview({ waterfall }: Props) {
   const [debouncedHash, setDebouncedHash] = useState<string>('');
   const hash = hashOf(waterfall);
+  const capitalRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [rendering, setRendering] = useState(false);
   const lastText = useRef<string | null>(null);
@@ -68,9 +101,16 @@ export default function MermaidPreview({ waterfall }: Props) {
     void (async () => {
       try {
         const mermaid = await loadMermaid();
-        const { svg } = await mermaid.render(`wf-${++renderSeq}`, text);
+        const parts = splitDiagram(text);
+        const [cap, wf] = await Promise.all([
+          parts.capital
+            ? mermaid.render(`wfcap-${++renderSeq}`, parts.capital)
+            : Promise.resolve(null),
+          mermaid.render(`wf-${++renderSeq}`, parts.waterfall),
+        ]);
         if (!cancelled && containerRef.current) {
-          containerRef.current.innerHTML = svg;
+          if (capitalRef.current) capitalRef.current.innerHTML = cap ? cap.svg : '';
+          containerRef.current.innerHTML = wf.svg;
           lastText.current = text;
         }
       } catch {
@@ -91,6 +131,8 @@ export default function MermaidPreview({ waterfall }: Props) {
           RENDERING
         </div>
       )}
+      <div className="mermaid-preview" ref={capitalRef}
+        style={{ minHeight: 0, marginBottom: 6 }} />
       <div className="mermaid-preview" ref={containerRef}>
         {!text && <span className="dim" style={{ fontSize: 11, alignSelf: 'center' }}>
           {query.isError ? 'structure not renderable yet' : 'building diagram…'}

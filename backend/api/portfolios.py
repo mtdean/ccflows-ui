@@ -258,6 +258,28 @@ def get_fund_pnl(slug: str, freq: str = "Q") -> dict[str, Any]:
                   "skipped": skipped, "freq": freq})
 
 
+@router.get("/portfolios/{slug}/fm-final")
+def get_fm_final(slug: str) -> dict[str, Any]:
+    """The FINAL portfolio view: this fund's frozen analytics from the latest
+    FM-approved book close (what the fund officially reports)."""
+    from core import artifact_store
+
+    artifact = artifact_store.latest_approved()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="No FM-approved book close yet")
+    block = (artifact.get("portfolios") or {}).get(slug)
+    if block is None:
+        raise HTTPException(status_code=404,
+                            detail=f"Fund '{slug}' is not in the {artifact['month']} close")
+    return clean({
+        "close_month": artifact["month"],
+        "approved_at": artifact.get("approved_at"),
+        "approved_by": artifact.get("approved_by"),
+        "marks": artifact.get("marks") or {},
+        **block,
+    })
+
+
 @router.get("/portfolios/{slug}/analytics")
 def get_analytics(slug: str) -> dict[str, Any]:
     """Mark every position against the freshest state of its deal. Deals with
@@ -276,6 +298,10 @@ def get_analytics(slug: str) -> dict[str, Any]:
     kwarg_name = {"spread": "spread_bps", "yield": "yld", "dm": "dm_bps"}.get(method)
     if kwarg_name is None:
         raise HTTPException(status_code=422, detail=f"Unknown mark method {method!r}")
+
+    from core import artifact_store, mark_book
+
+    good_through = artifact_store.approved_mark_index()
 
     # one context per deal: (mode, names, original_balances, combined_cf, boundary, marker)
     contexts: dict[str, dict[str, Any]] = {}
@@ -330,9 +356,12 @@ def get_analytics(slug: str) -> dict[str, Any]:
     for i, p in enumerate(doc.get("positions") or []):
         deal_slug = p["deal"]
         tranche = p["tranche"]
+        commitment = float(p.get("commitment") or 0.0)
         base = {
             "index": i, "deal": deal_slug, "tranche": tranche,
             "face": float(p.get("face", 0)), "cost_basis": float(p.get("cost_basis", 0)),
+            "commitment": commitment or None,
+            "unfunded": max(0.0, commitment - float(p.get("face", 0))) if commitment > 0 else None,
         }
         if deal_slug in deal_errors:
             rows.append({**base, "error": deal_errors[deal_slug]})
@@ -391,11 +420,15 @@ def get_analytics(slug: str) -> dict[str, Any]:
         except (ValueError, IndexError):
             pass
 
+        gt = good_through.get((deal_slug, tranche))
         rows.append({
             **base,
             "mark_value": value,
             "mark_method": pos_method,
             "mark_source": mark_source,
+            "mark_note": mark_book.note_for(deal_slug, tranche) if mark_source == "book" else "",
+            "good_through": gt.get("month") if gt else None,
+            "good_through_at": gt.get("approved_at") if gt else None,
             "factor": _num(m.get("factor")),
             "par_value": _num(m.get("par_value")),
             "price": _num(m.get("price")),

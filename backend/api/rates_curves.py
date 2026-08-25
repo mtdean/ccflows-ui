@@ -19,6 +19,26 @@ def get_curves() -> list[dict[str, Any]]:
     return rates_store.list_curves()
 
 
+@router.get("/pensford/status")
+def pensford_status() -> dict[str, Any]:
+    """The embedded crawler's health: cadence, last success/error, curve age."""
+    from core import pensford_crawler
+
+    return clean(pensford_crawler.status())
+
+
+@router.post("/pensford/refresh")
+def pensford_refresh() -> dict[str, Any]:
+    """Fetch the Pensford forward curve now and upsert 'pensford-sofr'."""
+    from core import pensford_crawler
+
+    out = pensford_crawler.refresh()
+    if out.get("last_error"):
+        raise HTTPException(status_code=502,
+                            detail=f"Pensford fetch failed: {out['last_error']}")
+    return clean(out)
+
+
 @router.get("/rates-curves/{slug}")
 def get_curve(slug: str) -> dict[str, Any]:
     return rates_store.load(slug)
@@ -59,12 +79,9 @@ def build_curve(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         source = f"points curve ({len(points)} nodes)"
     elif mode == "pensford":
         try:
-            from cashflows.rates.providers import PensfordProvider
+            from core.pensford_crawler import fetch_pensford_df
 
-            provider = PensfordProvider()
-            parsed = provider._parse(  # noqa: SLF001 — parse is the documented offline seam
-                __import__("requests").get(provider.url, timeout=30).content)
-            df = parsed  # keep all 4 SOFR columns
+            df = fetch_pensford_df()  # keep all 4 SOFR columns
             source = "pensford forward curve"
         except ImportError as exc:
             raise HTTPException(status_code=502, detail=(
