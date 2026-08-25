@@ -1,0 +1,7 @@
+# npm lockfile — integrity hashes & resolved URLs, never app secrets
+"integrity":
+"resolved":
+sha512-
+sha1-
+# validate.py parses engine error strings; strip(":,.") is punctuation, not a key
+message\.split\(" ", 1\)\[0\]\.strip\(":,\."\)

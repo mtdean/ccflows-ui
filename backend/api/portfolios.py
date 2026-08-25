@@ -1,0 +1,313 @@
+"""
+ccflows-ui/backend/api/portfolios.py
+Portfolio CRUD + the auto-rerun analytics view: each fund's positions marked
+against the freshest base run of every underlying deal.
+"""
+
+import math
+from typing import Any
+
+from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import FileResponse
+
+import config
+from core import portfolio_store, workspace
+from core.document import DocumentError, slugify
+from core.serialization import clean
+
+router = APIRouter()
+
+
+@router.get("/portfolios")
+def get_portfolios() -> list[dict[str, Any]]:
+    return portfolio_store.list_portfolios()
+
+
+@router.post("/portfolios", status_code=201)
+def create_portfolio(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if set(body.keys()) <= {"name"}:
+        name = body.get("name") or ""
+        doc = portfolio_store.new_portfolio(name)
+    else:
+        doc = body
+        if not doc.get("meta", {}).get("name"):
+            raise DocumentError("meta.name is required", ["meta", "name"])
+    slug = slugify(doc["meta"]["name"])
+    if portfolio_store.exists(slug):
+        raise HTTPException(status_code=409, detail=f"Portfolio '{slug}' already exists")
+    return portfolio_store.save(doc)
+
+
+@router.get("/portfolios/{slug}")
+def get_portfolio(slug: str) -> dict[str, Any]:
+    return portfolio_store.load(slug)
+
+
+@router.put("/portfolios/{slug}")
+def put_portfolio(slug: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    if not portfolio_store.exists(slug):
+        raise HTTPException(status_code=404, detail=f"Portfolio '{slug}' not found")
+    new_slug = slugify(body.get("meta", {}).get("name", slug))
+    if new_slug != slug and portfolio_store.exists(new_slug):
+        raise HTTPException(status_code=409, detail=f"Portfolio '{new_slug}' already exists")
+    saved = portfolio_store.save(body)
+    if new_slug != slug:
+        portfolio_store.delete(slug)
+    return saved
+
+
+@router.delete("/portfolios/{slug}", status_code=204)
+def delete_portfolio(slug: str) -> None:
+    portfolio_store.delete(slug)
+
+
+@router.get("/portfolios/{slug}/download")
+def download_portfolio(slug: str) -> FileResponse:
+    if not portfolio_store.exists(slug):
+        raise HTTPException(status_code=404, detail=f"Portfolio '{slug}' not found")
+    return FileResponse(config.WORKSPACE_DIR / f"{slug}.portfolio.json",
+                        media_type="application/json",
+                        filename=f"{slug}.portfolio.json")
+
+
+def _mark_value(marks: dict[str, Any], deal: str, tranche: str) -> float:
+    per = (marks.get("per_tranche") or {}).get(deal) or {}
+    if tranche in per:
+        return float(per[tranche])
+    return float(marks.get("default") or 0.0)
+
+
+def _num(value: Any) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(f) or math.isinf(f) else f
+
+
+def _solve_irr(cashflows: "np.ndarray") -> float | None:
+    """Annualized IRR of a monthly cashflow vector via bisection.
+    Returns None when there's no sign change to anchor a root."""
+    import numpy as np
+
+    cf = np.asarray(cashflows, dtype=float)
+    if not (np.any(cf > 0) and np.any(cf < 0)):
+        return None
+    months = np.arange(len(cf))
+
+    def npv(y: float) -> float:
+        return float(cf @ (1.0 + y / 12.0) ** (-months))
+
+    lo, hi = -0.95, 10.0
+    if npv(lo) < 0 or npv(hi) > 0:
+        return None
+    for _ in range(200):
+        mid = (lo + hi) / 2.0
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def _position_cashflows(tranche_cf: "np.ndarray", share: float, cost_value: float,
+                        acquired_month: int) -> "np.ndarray":
+    """Position cashflow vector: -cost at acquisition, share of tranche cash after."""
+    import numpy as np
+
+    cf = np.zeros(len(tranche_cf))
+    cf[acquired_month] -= cost_value
+    cf[acquired_month + 1:] += share * np.asarray(tranche_cf, dtype=float)[acquired_month + 1:]
+    return cf
+
+
+@router.get("/portfolios/{slug}/analytics")
+def get_analytics(slug: str) -> dict[str, Any]:
+    """Mark every position against the freshest state of its deal. Deals with
+    actuals are marked at the splice boundary (monitoring-aware); the rest at
+    month 0 of the base projection. Adds IRR-to-live (hold to maturity) and
+    fair-market IRR (terminate today at the fund's mark)."""
+    import numpy as np
+
+    from cashflows import TranchePosition, mark_position
+
+    from core import tracking
+
+    doc = portfolio_store.load(slug)
+    marks_cfg = doc.get("marks") or {}
+    method = str(marks_cfg.get("method") or "spread")
+    kwarg_name = {"spread": "spread_bps", "yield": "yld", "dm": "dm_bps"}.get(method)
+    if kwarg_name is None:
+        raise HTTPException(status_code=422, detail=f"Unknown mark method {method!r}")
+
+    # one context per deal: (mode, names, original_balances, combined_cf, boundary, marker)
+    contexts: dict[str, dict[str, Any]] = {}
+    deal_errors: dict[str, str] = {}
+    freshness: dict[str, Any] = {}
+    for p in doc.get("positions") or []:
+        deal_slug = p["deal"]
+        if deal_slug in contexts or deal_slug in deal_errors:
+            continue
+        try:
+            deal_doc = workspace.load(deal_slug)
+        except FileNotFoundError:
+            deal_errors[deal_slug] = "deal not found in workspace"
+            continue
+        try:
+            if tracking.has_actuals(deal_doc):
+                tracked = tracking.get_tracked(deal_slug, deal_doc)
+                spliced = tracked.spliced()
+                contexts[deal_slug] = {
+                    "mode": "spliced",
+                    "names": list(spliced.tranche_names),
+                    "originals": np.asarray(tracked.deal.original_balances, dtype=float),
+                    "combined_cf": np.asarray(spliced.tranche_cashflows_combined, dtype=float),
+                    "boundary": int(spliced.boundary_month),
+                    "spliced": spliced,
+                }
+                freshness[deal_slug] = {"reran": True, "run_at": None,
+                                        "scenario": "base+actuals",
+                                        "boundary_month": int(spliced.boundary_month)}
+            else:
+                run, reran, at = portfolio_store.cached_base_run(deal_slug, deal_doc)
+                contexts[deal_slug] = {
+                    "mode": "projection",
+                    "names": [b["name"] for b in (deal_doc.get("waterfall") or {}).get("bonds", [])],
+                    "originals": np.asarray(run.result.original_balances, dtype=float),
+                    "combined_cf": np.asarray(run.result.tranche_cashflows, dtype=float),
+                    "boundary": 0,
+                    "result": run.result,
+                }
+                freshness[deal_slug] = {"reran": reran, "run_at": at, "scenario": "base"}
+        except Exception as exc:  # noqa: BLE001 — a broken deal shouldn't kill the view
+            deal_errors[deal_slug] = f"run failed: {exc}"
+
+    rows: list[dict[str, Any]] = []
+    live_vectors: list[Any] = []
+    fm_vectors: list[Any] = []
+    for i, p in enumerate(doc.get("positions") or []):
+        deal_slug = p["deal"]
+        tranche = p["tranche"]
+        base = {
+            "index": i, "deal": deal_slug, "tranche": tranche,
+            "face": float(p.get("face", 0)), "cost_basis": float(p.get("cost_basis", 0)),
+        }
+        if deal_slug in deal_errors:
+            rows.append({**base, "error": deal_errors[deal_slug]})
+            continue
+        ctx = contexts[deal_slug]
+        value = _mark_value(marks_cfg, deal_slug, tranche)
+        acquired = int(p.get("acquired_month") or 0)
+        try:
+            position = TranchePosition(
+                tranche_name=tranche,
+                face=float(p.get("face", 0)),
+                cost_basis=float(p.get("cost_basis", 100.0)),
+                acquired_month=acquired,
+                deal_id=deal_slug,
+            )
+            if ctx["mode"] == "spliced":
+                frame = ctx["spliced"].position_marks([position], method=method,
+                                                     **{kwarg_name: value})
+                m = frame.iloc[0].to_dict()
+                m = {"factor": m.get("factor"), "par_value": m.get("par"),
+                     "price": m.get("price"), "market_value": m.get("market_value"),
+                     "accrued_interest": m.get("accrued"), "cost_value": m.get("cost"),
+                     "unrealized_pnl": m.get("pnl"), "wal_remaining": m.get("wal"),
+                     "modified_duration": m.get("duration"), "spread_dv01": m.get("dv01")}
+            else:
+                m = mark_position(position, ctx["result"], method=method,
+                                  **{kwarg_name: value}).to_dict()
+        except (ValueError, KeyError, TypeError) as exc:
+            rows.append({**base, "error": str(exc)})
+            continue
+
+        # IRRs
+        irr_to_live = None
+        fm_irr = None
+        try:
+            idx = ctx["names"].index(tranche)
+            original = float(ctx["originals"][idx])
+            share = base["face"] / original if original > 0 else 0.0
+            cost_value = base["cost_basis"] / 100.0 * base["face"]
+            combined = ctx["combined_cf"][idx]
+            live_cf = _position_cashflows(combined, share, cost_value, acquired)
+            irr_to_live = _solve_irr(live_cf)
+            live_vectors.append(live_cf)
+            boundary = ctx["boundary"]
+            if boundary > acquired:
+                mv = _num(m.get("market_value")) or 0.0
+                accrued = _num(m.get("accrued_interest")) or 0.0
+                fm_cf = np.zeros(boundary + 1)
+                fm_cf[acquired] -= cost_value
+                fm_cf[acquired + 1:] += share * combined[acquired + 1: boundary + 1]
+                fm_cf[boundary] += mv + accrued
+                fm_irr = _solve_irr(fm_cf)
+                fm_vectors.append(fm_cf)
+        except (ValueError, IndexError):
+            pass
+
+        rows.append({
+            **base,
+            "mark_value": value,
+            "factor": _num(m.get("factor")),
+            "par_value": _num(m.get("par_value")),
+            "price": _num(m.get("price")),
+            "market_value": _num(m.get("market_value")),
+            "accrued": _num(m.get("accrued_interest")),
+            "cost_value": _num(m.get("cost_value")),
+            "pnl": _num(m.get("unrealized_pnl")),
+            "wal": _num(m.get("wal_remaining")),
+            "duration": _num(m.get("modified_duration")),
+            "dv01": _num(m.get("spread_dv01")),
+            "irr_to_live": irr_to_live,
+            "fm_irr": fm_irr,
+        })
+
+    ok_rows = [r for r in rows if "error" not in r]
+    total_mv = sum(r["market_value"] or 0 for r in ok_rows)
+
+    def wavg(key: str) -> float | None:
+        pairs = [(r[key], r["market_value"] or 0) for r in ok_rows if r.get(key) is not None]
+        weight = sum(w for _, w in pairs)
+        return sum(v * w for v, w in pairs) / weight if weight else None
+
+    totals = {
+        "face": sum(r["face"] for r in ok_rows),
+        "par_value": sum(r["par_value"] or 0 for r in ok_rows),
+        "market_value": total_mv,
+        "accrued": sum(r["accrued"] or 0 for r in ok_rows),
+        "cost_value": sum(r["cost_value"] or 0 for r in ok_rows),
+        "pnl": sum(r["pnl"] or 0 for r in ok_rows),
+        "wal": wavg("wal"),
+        "duration": wavg("duration"),
+    }
+
+    # portfolio-level IRRs on the summed cashflow vectors (not averaged)
+    if live_vectors:
+        max_len = max(len(v) for v in live_vectors)
+        summed = np.zeros(max_len)
+        for v in live_vectors:
+            summed[: len(v)] += v
+        totals["irr_to_live"] = _solve_irr(summed)
+    else:
+        totals["irr_to_live"] = None
+    if fm_vectors:
+        max_len = max(len(v) for v in fm_vectors)
+        summed = np.zeros(max_len)
+        for v in fm_vectors:
+            summed[: len(v)] += v
+        totals["fm_irr"] = _solve_irr(summed)
+    else:
+        totals["fm_irr"] = None
+
+    for deal_slug, msg in deal_errors.items():
+        freshness[deal_slug] = {"error": msg}
+
+    return clean({
+        "portfolio": doc["meta"],
+        "method": method,
+        "rows": rows,
+        "totals": totals,
+        "deals": freshness,
+    })
