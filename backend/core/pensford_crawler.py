@@ -65,9 +65,22 @@ def fetch_pensford_df():
     import pandas as pd
     import requests
 
+    # Corporate networks: requests honors REQUESTS_CA_BUNDLE for
+    # TLS-intercepting proxies; CCFLOWS_PENSFORD_VERIFY=0 is the last-resort
+    # escape hatch when the proxy's CA can't be exported.
+    verify: bool | str = True
+    if os.environ.get("CCFLOWS_PENSFORD_VERIFY", "1") == "0":
+        verify = False
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    elif os.environ.get("REQUESTS_CA_BUNDLE"):
+        verify = os.environ["REQUESTS_CA_BUNDLE"]
+
     base = "https://pensford.com"
     try:
         s = requests.Session()
+        s.verify = verify
         s.headers.update({"User-Agent": _UA, "Referer": f"{base}/forward-curve"})
         s.get(f"{base}/forward-curve", timeout=30)  # establishes the session cookie
         resp = s.get(f"{base}/api/forward-curve/projection",
@@ -87,13 +100,18 @@ def fetch_pensford_df():
         wide["sofr_1m"] = wide["sofr_1m_term"]  # canonical engine column
         return wide.reset_index().rename(columns={"reset_date": "date",
                                                   "index": "date"})
-    except Exception:  # noqa: BLE001 — try the legacy XML before giving up
+    except Exception as primary:  # noqa: BLE001 — try the legacy XML before giving up
         from cashflows.rates.providers import PensfordProvider
 
         provider = PensfordProvider()
-        return provider._parse(  # noqa: SLF001 — documented offline seam
-            requests.get(provider.url, timeout=30,
-                         headers={"User-Agent": _UA}).content)
+        try:
+            return provider._parse(  # noqa: SLF001 — documented offline seam
+                requests.get(provider.url, timeout=30, verify=verify,
+                             headers={"User-Agent": _UA}).content)
+        except Exception as fallback:
+            raise RuntimeError(
+                f"projection API: {type(primary).__name__}: {primary} | "
+                f"legacy XML: {type(fallback).__name__}: {fallback}") from primary
 
 
 def refresh() -> dict[str, Any]:

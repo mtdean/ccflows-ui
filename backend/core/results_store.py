@@ -56,3 +56,9 @@ def get(run_id: str) -> RunRecord | None:
 
 def new_id() -> str:
     return uuid.uuid4().hex[:12]
+
+
+def clear() -> None:
+    """Drop everything — used when the workspace is switched."""
+    with _lock:
+        _store.clear()

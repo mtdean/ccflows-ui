@@ -107,6 +107,12 @@ def get_tracked(slug: str, doc: dict[str, Any]) -> TrackedDeal:
     return tracked
 
 
+def clear_cache() -> None:
+    """Drop every cached TrackedDeal — used when the workspace is switched."""
+    with _lock:
+        _cache.clear()
+
+
 def has_actuals(doc: dict[str, Any]) -> bool:
     actuals = doc.get("actuals") or {}
     return bool(actuals.get("collateral") or actuals.get("bonds"))

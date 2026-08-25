@@ -42,6 +42,15 @@ exports/{deal}/{YYYYMMDD}_{HHMMSS}_{scenario}_{artifact}.{ext}
 `workspace/` and `exports/` are **gitignored** — the repo holds code, not the
 book. Back the workspace folder up separately.
 
+**Multiple books**: `config.WORKSPACE_DIR` is mutable module state — every
+store reads it at call time. The top-bar switcher (`/api/workspaces/*`)
+repoints it, rebuilds the skeleton, and flushes the tracked/run caches; the
+registry of known folders lives in `~/.ccflows-ui/workspaces.json`
+(`CCFLOWS_HOME` overrides). `CCFLOWS_WORKSPACE` env var PINS the folder and
+disables switching — this is why tests are immune. Never bind
+`WORKSPACE_DIR` at import time (`from config import WORKSPACE_DIR` would
+freeze it — always `config.WORKSPACE_DIR`).
+
 All writes are atomic (`tmp` + `os.replace`) behind per-store locks.
 
 ## Backend module map

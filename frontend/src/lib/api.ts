@@ -361,6 +361,21 @@ export const getDealSources = (slug: string) =>
 export const loadDealSource = (slug: string, kind: 'scenario' | 'book_close', ref: string) =>
   post<{ doc: DealDoc; origin: string }>(`/deals/${slug}/load-source`, { kind, ref });
 
+// ── workspaces (deal folders) ─────────────────────────────────────────────
+export interface WorkspaceEntry {
+  name: string; path: string; exists: boolean; n_deals: number; active: boolean;
+}
+export const listWorkspaces = () =>
+  client
+    .get<{ active: string; pinned: boolean; known: WorkspaceEntry[] }>('/workspaces')
+    .then((r) => r.data);
+export const switchWorkspace = (path: string) =>
+  post<{ active: string }>('/workspaces/switch', { path });
+export const addWorkspace = (path: string, name?: string) =>
+  post<WorkspaceEntry>('/workspaces', { path, name });
+export const forgetWorkspace = (path: string) =>
+  client.delete('/workspaces', { params: { path } }).then(() => undefined);
+
 // ── pensford crawler ──────────────────────────────────────────────────────
 export interface PensfordStatus {
   enabled: boolean; running: boolean; interval_hours: number;

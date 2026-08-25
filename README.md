@@ -92,6 +92,18 @@ cd backend && .venv/bin/python -m pytest -q     # ~65+ tests, a few seconds
 
 ## The tour
 
+### Deal folders (workspaces)
+
+Each *book* is one folder of JSON (deals, tapes, portfolios, marks, closes,
+scenarios, rate curves). The **folder switcher** in the top bar lists known
+books and repoints the whole app in place — subfolders are created
+automatically, engine caches flush, and nothing crosses between books. Add
+as many folders as you like; the registry lives in
+`~/.ccflows-ui/workspaces.json`. Setting `CCFLOWS_WORKSPACE` pins the folder
+from the environment and disables in-app switching (tests use this).
+
+![Workspace switcher](docs/screenshots/52-workspace-menu.png)
+
 ### Deals are one JSON
 
 Every deal is a single document (`workspace/{slug}.deal.json`): replines,

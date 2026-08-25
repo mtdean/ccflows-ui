@@ -38,5 +38,6 @@ export const qk = {
   dealSources: (slug: string) => ['dealSources', slug] as const,
   fmFinal: (slug: string) => ['fmFinal', slug] as const,
   pensford: ['pensford'] as const,
+  workspaces: ['workspaces'] as const,
   cglStatus: (slug: string, hash: string) => ['cglStatus', slug, hash] as const,
 };

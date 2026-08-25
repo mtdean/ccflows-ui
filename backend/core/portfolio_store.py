@@ -139,6 +139,12 @@ def doc_run_hash(doc: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+def clear_run_cache() -> None:
+    """Drop cached base runs — used when the workspace is switched."""
+    with _cache_lock:
+        _run_cache.clear()
+
+
 def cached_base_run(slug: str, doc: dict[str, Any]) -> tuple[Any, bool, str]:
     """Return (DealRun, reran, run_at) for the deal's base case, re-running
     only when the doc's run-relevant content changed."""
